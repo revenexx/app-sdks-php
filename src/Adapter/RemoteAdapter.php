@@ -56,7 +56,8 @@ final class RemoteAdapter implements Adapter
     {
         $rows = $this->request('POST', "/{$entity->table}", $data, 'return=representation');
 
-        return $rows[0] ?? $rows ?? [];
+        return $this->oneRow($rows)
+            ?? throw new \RuntimeException("app-sdk: {$entity->name} was created but could not be read back");
     }
 
     public function update(Entity $entity, int|string $id, array $patch): array
@@ -68,12 +69,33 @@ final class RemoteAdapter implements Adapter
             'return=representation',
         );
 
-        return $rows[0] ?? $rows ?? [];
+        // PostgREST reports a write that touched no row as `200 []`. Returning
+        // that empty array as if it were the updated record hides a missing row
+        // behind a success; say so instead.
+        return $this->oneRow($rows)
+            ?? throw new \RuntimeException("app-sdk: {$entity->name}/{$id} not found");
     }
 
     public function remove(Entity $entity, int|string $id): void
     {
         $this->request('DELETE', "/{$entity->table}?{$entity->pk}=eq." . rawurlencode((string) $id));
+    }
+
+    /**
+     * The single record out of a `return=representation` response: the first
+     * element of a list, or the body itself when PostgREST returned one object.
+     * Null when the write returned no representation at all.
+     *
+     * @param  array<int|string, mixed>|null $rows
+     * @return array<string, mixed>|null
+     */
+    private function oneRow(?array $rows): ?array
+    {
+        if ($rows === null || $rows === []) {
+            return null;
+        }
+        /** @var array<string, mixed> */
+        return \is_array($rows[0] ?? null) ? $rows[0] : $rows;
     }
 
     /**

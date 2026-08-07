@@ -11,6 +11,9 @@ namespace Revenexx\AppSdk;
  */
 final class Client
 {
+    /** The one wording both runtimes use for "you sent nothing to update". */
+    public const EMPTY_UPDATE_MESSAGE = 'request body must contain at least one field to update';
+
     /** @param array<string, Entity> $entities */
     public function __construct(
         private readonly Adapter $adapter,
@@ -60,12 +63,20 @@ final class Client
     }
 
     /**
+     * A patch with no fields is rejected before it reaches the adapter — it is
+     * a malformed request, not a write. PostgREST answers a column-less PATCH
+     * with `200 []`, so the adapter would have no row to return; the TS runtime
+     * has the same rule (packages/sdk/src/patch.ts).
+     *
      * @param array<string, mixed> $patch
      * @return array<string, mixed>
      */
     public function update(Entity $entity, int|string $id, array $patch): array
     {
         $this->guard($entity, 'update');
+        if ($patch === []) {
+            throw new \InvalidArgumentException(self::EMPTY_UPDATE_MESSAGE);
+        }
 
         return $this->adapter->update($entity, $id, $patch);
     }

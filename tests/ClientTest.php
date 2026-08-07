@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Revenexx\AppSdk\Tests;
 
 use PHPUnit\Framework\TestCase;
+use Revenexx\AppSdk\Adapter\RemoteAdapter;
 use Revenexx\AppSdk\AdapterRegistry;
 use Revenexx\AppSdk\Client;
 use Revenexx\AppSdk\Entity;
@@ -77,6 +78,30 @@ final class ClientTest extends TestCase
 
         $gte = $db->list($e, ['where' => ['created_at' => ['op' => 'gte', 'value' => '2026-01-02']]]);
         $this->assertCount(2, $gte);
+    }
+
+    public function testUpdateWithAnEmptyPatchIsRejected(): void
+    {
+        $e = $this->greetings();
+        $db = $this->client($e, ['greetings' => [['id' => '1', 'name' => 'a']]]);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage(Client::EMPTY_UPDATE_MESSAGE);
+        $db->update($e, '1', []);
+    }
+
+    public function testRemoteUpdateThatTouchedNoRowIsNotAnEmptyRecord(): void
+    {
+        $e = $this->greetings();
+        // PostgREST answers a write that touched no row with `200 []`.
+        $adapter = new RemoteAdapter(
+            endpoint: 'http://pgrst:3000',
+            transport: static fn (): array => ['status' => 200, 'body' => '[]'],
+        );
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/not found/');
+        $adapter->update($e, 'gone', ['message' => 'Hi']);
     }
 
     public function testPermissionGatingBlocksUnpermittedOps(): void
