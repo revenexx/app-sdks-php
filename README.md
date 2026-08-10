@@ -1,7 +1,7 @@
 # revenexx/app-sdk (PHP)
 
 Typed PostgREST data client for revenexx Apps — the PHP runtime that the
-generated `Db.php` (from `@revenexx/app-sdk-cli --target php`) depends on.
+generated `Db.php` (from `revenexx apps generate --target php`) depends on.
 Swappable adapters (`mock` | `remote`) mirror the JS SDK (ADR-0013 / ADR-0057).
 
 ```php

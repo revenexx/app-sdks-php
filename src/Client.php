@@ -6,7 +6,7 @@ namespace Revenexx\AppSdk;
 
 /**
  * Low-level entity client: routes ops to the adapter, enforcing the per-entity
- * permission gate. The generated `Db` (from @revenexx/app-sdk-cli) wraps this
+ * permission gate. The generated `Db` (from `revenexx apps generate`) wraps this
  * with typed repositories and DTOs.
  */
 final class Client
