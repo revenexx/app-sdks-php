@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Revenexx\AppSdk\Adapter;
 
 use Revenexx\AppSdk\Adapter;
+use Revenexx\AppSdk\EmitsEvents;
+use Revenexx\AppSdk\EmitTarget;
 use Revenexx\AppSdk\Entity;
 use Revenexx\AppSdk\Query;
 
@@ -16,7 +18,7 @@ use Revenexx\AppSdk\Query;
  *
  * @phpstan-type Transport callable(string, string, array<int, string>, ?string): array{status: int, body: string}
  */
-final class RemoteAdapter implements Adapter
+final class RemoteAdapter implements Adapter, EmitsEvents
 {
     /** @var callable(string, string, array<int, string>, ?string): array{status: int, body: string} */
     private $transport;
@@ -79,6 +81,48 @@ final class RemoteAdapter implements Adapter
     public function remove(Entity $entity, int|string $id): void
     {
         $this->request('DELETE', "/{$entity->table}?{$entity->pk}=eq." . rawurlencode((string) $id));
+    }
+
+    /**
+     * Fire one of the App's own declared events through the routine Baseline
+     * generated for it: `POST /rpc/{vendor}__{app}__emit`.
+     *
+     * Nothing about WHICH app is emitting travels in this request. The routine
+     * is per app, its topic prefix and its allowlist are literals, and only the
+     * app's Postgres role may execute it — so the same token that reaches the
+     * app's tables is the whole credential.
+     *
+     * The body keys are the routine's parameter names, not ours: `topicId`
+     * becomes `topic_id`, and `id` becomes `event_id` because a parameter named
+     * `id` would shadow the outbox column in the routine's ON CONFLICT clause.
+     *
+     * @param array<string, mixed> $data
+     * @param array{topicId?: ?string, metadata?: array<string, mixed>, id?: ?string} $options
+     * @return array{id: string, topic: string}
+     */
+    public function emit(EmitTarget $target, array $data = [], array $options = []): array
+    {
+        $answer = $this->request('POST', "/rpc/{$target->fn}", [
+            'event' => $target->name,
+            'data' => (object) $data,
+            'topic_id' => $options['topicId'] ?? null,
+            'metadata' => (object) ($options['metadata'] ?? []),
+            'event_id' => $options['id'] ?? null,
+        ]) ?? [];
+
+        $id = \is_string($answer['id'] ?? null) ? $answer['id'] : null;
+        $topic = \is_string($answer['topic'] ?? null) ? $answer['topic'] : null;
+
+        // The routine always returns both, so an answer without them means the
+        // request reached something other than the routine we asked for.
+        // Failing here beats handing the caller an event id of null.
+        if ($id === null || $topic === null) {
+            throw new \RuntimeException(
+                "app-sdk: {$target->fn} returned no event id for '{$target->name}'",
+            );
+        }
+
+        return ['id' => $id, 'topic' => $topic];
     }
 
     /**

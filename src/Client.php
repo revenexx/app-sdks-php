@@ -14,16 +14,37 @@ final class Client
     /** The one wording both runtimes use for "you sent nothing to update". */
     public const EMPTY_UPDATE_MESSAGE = 'request body must contain at least one field to update';
 
-    /** @param array<string, Entity> $entities */
+    /**
+     * @param array<string, Entity>          $entities
+     * @param array<string, EventDescriptor> $declaredEvents the App's own `trigger: "app"` events
+     * @param ?string                        $emitFn         the routine Baseline generated for them
+     */
     public function __construct(
         private readonly Adapter $adapter,
         private readonly array $entities,
+        private readonly ?string $emitFn = null,
+        private readonly array $declaredEvents = [],
     ) {
     }
 
     public function adapter(): Adapter
     {
         return $this->adapter;
+    }
+
+    /**
+     * The App's own events. Throws when the manifest declares none — there is
+     * no routine to call, and a silent no-op would be worse than the error.
+     */
+    public function events(): Events
+    {
+        if ($this->emitFn === null || $this->emitFn === '') {
+            throw new \RuntimeException(
+                'app-sdk: this app declares no app-fired events — add one to manifest.json events.emits[] with "trigger": "app"',
+            );
+        }
+
+        return new Events($this->adapter, $this->emitFn, $this->declaredEvents);
     }
 
     public function entity(string $name): Entity

@@ -5,18 +5,24 @@ declare(strict_types=1);
 namespace Revenexx\AppSdk\Adapter;
 
 use Revenexx\AppSdk\Adapter;
+use Revenexx\AppSdk\EmitsEvents;
+use Revenexx\AppSdk\EmitTarget;
 use Revenexx\AppSdk\Entity;
 use Revenexx\AppSdk\Query;
+use Revenexx\AppSdk\RecordsEvents;
 
 /**
  * In-memory adapter. Zero infrastructure: develop + unit-test App logic against
  * fixtures. Does NOT enforce RLS, constraints, triggers or PostgREST semantics —
  * run the `remote` adapter against a dev tenant for that fidelity before deploy.
  */
-final class MockAdapter implements Adapter
+final class MockAdapter implements Adapter, EmitsEvents, RecordsEvents
 {
     /** @var array<string, array<array-key, array<string, mixed>>> */
     private array $store = [];
+
+    /** @var array<int, array<string, mixed>> */
+    private array $events = [];
 
     /** @param array<string, array<int, array<string, mixed>>> $seed */
     public function __construct(private readonly array $seed = [])
@@ -134,6 +140,51 @@ final class MockAdapter implements Adapter
         }
 
         return $row;
+    }
+
+    /**
+     * Record instead of publish, so an App can assert what it fired without any
+     * infrastructure. The signature and the answer are the remote adapter's,
+     * deliberately: a double that drifts from the real surface is how a test
+     * passes while production breaks.
+     *
+     * @param array<string, mixed> $data
+     * @param array{topicId?: ?string, metadata?: array<string, mixed>, id?: ?string} $options
+     * @return array{id: string, topic: string}
+     */
+    public function emit(EmitTarget $target, array $data = [], array $options = []): array
+    {
+        $result = [
+            'id' => $options['id'] ?? 'evt_' . str_replace('-', '', self::uuid()),
+            'topic' => $target->descriptor->topic,
+        ];
+
+        // Idempotency the way the outbox gives it: a second emit under an id
+        // already used is a no-op and the FIRST payload stands. A mock that
+        // recorded both would let a test pass that production silently drops.
+        foreach ($this->events as $recorded) {
+            if (($recorded['result']['id'] ?? null) === $result['id']) {
+                return $result;
+            }
+        }
+
+        $this->events[] = [
+            'event' => $target->name,
+            'topic' => $result['topic'],
+            'data' => $data,
+            'options' => $options,
+            'result' => $result,
+        ];
+
+        return $result;
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    public function emitted(): array
+    {
+        // PHP arrays are copied on assignment, so callers cannot rewrite what
+        // the next assertion reads.
+        return $this->events;
     }
 
     private static function uuid(): string
