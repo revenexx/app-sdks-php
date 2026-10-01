@@ -14,6 +14,9 @@ final class Client
     /** The one wording both runtimes use for "you sent nothing to update". */
     public const EMPTY_UPDATE_MESSAGE = 'request body must contain at least one field to update';
 
+    /** The one wording both runtimes use for "a conditional update with no condition". */
+    public const EMPTY_CONDITION_MESSAGE = 'a conditional update needs at least one condition in where';
+
     /**
      * @param array<string, Entity>          $entities
      * @param array<string, EventDescriptor> $declaredEvents the App's own `trigger: "app"` events
@@ -102,17 +105,52 @@ final class Client
         return $this->adapter->update($entity, $id, $patch);
     }
 
+    /**
+     * Compare-and-set: update the row only if it still matches `$where`, in one
+     * write. Null when no row matched — the row is gone, invisible, or the
+     * condition no longer holds; a lost race is an outcome to branch on, not an
+     * error. Gated by the `update` permission.
+     *
+     * An empty `$where` is refused: it is an unconditional update spelled as a
+     * conditional one, and would let through the race the caller meant to
+     * close. `update()` is the unconditional write. Same rule as the TS runtime
+     * (packages/sdk/src/patch.ts).
+     *
+     * @param array<string, mixed> $where
+     * @param array<string, mixed> $patch
+     * @return array<string, mixed>|null
+     */
+    public function updateIf(Entity $entity, int|string $id, array $where, array $patch): ?array
+    {
+        $this->guard($entity, 'update', 'updateIf');
+        if ($where === []) {
+            throw new \InvalidArgumentException(self::EMPTY_CONDITION_MESSAGE);
+        }
+        if ($patch === []) {
+            throw new \InvalidArgumentException(self::EMPTY_UPDATE_MESSAGE);
+        }
+        if (! $this->adapter instanceof UpdatesConditionally) {
+            throw new \RuntimeException(
+                "{$entity->name}.updateIf() is not supported by the '{$this->adapter->kind()}' adapter",
+            );
+        }
+
+        return $this->adapter->updateIf($entity, $id, $where, $patch);
+    }
+
     public function remove(Entity $entity, int|string $id): void
     {
         $this->guard($entity, 'delete');
         $this->adapter->remove($entity, $id);
     }
 
-    private function guard(Entity $entity, string $op): void
+    /** `$method` names what the App called when it differs from the op it needs. */
+    private function guard(Entity $entity, string $op, ?string $method = null): void
     {
         if (! $entity->allows($op)) {
+            $method ??= $op;
             throw new \RuntimeException(
-                "{$entity->name}.{$op}() is not permitted — add the matching access to manifest.permissions for '{$entity->name}'",
+                "{$entity->name}.{$method}() is not permitted — add the matching access to manifest.permissions for '{$entity->name}'",
             );
         }
     }

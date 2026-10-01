@@ -10,13 +10,14 @@ use Revenexx\AppSdk\EmitTarget;
 use Revenexx\AppSdk\Entity;
 use Revenexx\AppSdk\Query;
 use Revenexx\AppSdk\RecordsEvents;
+use Revenexx\AppSdk\UpdatesConditionally;
 
 /**
  * In-memory adapter. Zero infrastructure: develop + unit-test App logic against
  * fixtures. Does NOT enforce RLS, constraints, triggers or PostgREST semantics —
  * run the `remote` adapter against a dev tenant for that fidelity before deploy.
  */
-final class MockAdapter implements Adapter, EmitsEvents, RecordsEvents
+final class MockAdapter implements Adapter, EmitsEvents, RecordsEvents, UpdatesConditionally
 {
     /** @var array<string, array<array-key, array<string, mixed>>> */
     private array $store = [];
@@ -101,6 +102,27 @@ final class MockAdapter implements Adapter, EmitsEvents, RecordsEvents
         if ($cur === null) {
             throw new \RuntimeException("mock: {$entity->name}/{$id} not found");
         }
+
+        return $this->write($entity, $id, $cur, $patch);
+    }
+
+    public function updateIf(Entity $entity, int|string $id, array $where, array $patch): ?array
+    {
+        $cur = $this->table($entity)[$id] ?? null;
+        if ($cur === null || ! Query::matches($cur, $where)) {
+            return null;
+        }
+
+        return $this->write($entity, $id, $cur, $patch);
+    }
+
+    /**
+     * @param array<string, mixed> $cur
+     * @param array<string, mixed> $patch
+     * @return array<string, mixed>
+     */
+    private function write(Entity $entity, int|string $id, array $cur, array $patch): array
+    {
         $row = [...$cur, ...$patch];
         if (isset($entity->columns['updated_at'])) {
             $row['updated_at'] = gmdate('c');

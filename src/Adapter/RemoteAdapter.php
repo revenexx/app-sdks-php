@@ -9,6 +9,7 @@ use Revenexx\AppSdk\EmitsEvents;
 use Revenexx\AppSdk\EmitTarget;
 use Revenexx\AppSdk\Entity;
 use Revenexx\AppSdk\Query;
+use Revenexx\AppSdk\UpdatesConditionally;
 
 /**
  * PostgREST-over-HTTP adapter (production data plane / dev tenant). The token is
@@ -18,7 +19,7 @@ use Revenexx\AppSdk\Query;
  *
  * @phpstan-type Transport callable(string, string, array<int, string>, ?string): array{status: int, body: string}
  */
-final class RemoteAdapter implements Adapter, EmitsEvents
+final class RemoteAdapter implements Adapter, EmitsEvents, UpdatesConditionally
 {
     /** @var callable(string, string, array<int, string>, ?string): array{status: int, body: string} */
     private $transport;
@@ -76,6 +77,24 @@ final class RemoteAdapter implements Adapter, EmitsEvents
         // behind a success; say so instead.
         return $this->oneRow($rows)
             ?? throw new \RuntimeException("app-sdk: {$entity->name}/{$id} not found");
+    }
+
+    /**
+     * One PATCH with the condition ANDed onto the pk filter: Postgres re-checks
+     * the WHERE on the locked row, so of two racing writers exactly one
+     * matches. No prior read — that would reopen the race. `200 []` is the
+     * answer here, not a fault: no row matched.
+     */
+    public function updateIf(Entity $entity, int|string $id, array $where, array $patch): ?array
+    {
+        $rows = $this->request(
+            'PATCH',
+            "/{$entity->table}?{$entity->pk}=eq." . rawurlencode((string) $id) . '&' . Query::toParams(['where' => $where]),
+            $patch,
+            'return=representation',
+        );
+
+        return $this->oneRow($rows);
     }
 
     public function remove(Entity $entity, int|string $id): void
