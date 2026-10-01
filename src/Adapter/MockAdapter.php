@@ -50,6 +50,7 @@ final class MockAdapter implements Adapter, EmitsEvents, RecordsEvents
 
     public function list(Entity $entity, array $query = []): array
     {
+        self::assertWhereColumns($entity, $query['where'] ?? []);
         $rows = array_values(array_filter(
             $this->table($entity),
             static fn (array $r): bool => Query::matches($r, $query['where'] ?? []),
@@ -77,6 +78,34 @@ final class MockAdapter implements Adapter, EmitsEvents, RecordsEvents
         }
 
         return $rows;
+    }
+
+    /**
+     * A `where` on a column the entity does not have. PostgREST answers that
+     * with 400 (SQLSTATE 42703), which the remote adapter throws as
+     * "PostgREST 400: …"; the mock used to filter every row out and return [],
+     * so a test passed against a call that fails in production. Mirrors the TS
+     * mock. `tenant_id` exists on every table without being declared; an
+     * entity without column metadata is not checked.
+     *
+     * @param array<string, mixed> $where
+     */
+    private static function assertWhereColumns(Entity $entity, array $where): void
+    {
+        if ($entity->columns === [] || $where === []) {
+            return;
+        }
+        $unknown = array_values(array_filter(
+            array_keys($where),
+            static fn (string|int $k): bool => ! \array_key_exists($k, $entity->columns) && $k !== 'tenant_id',
+        ));
+        if ($unknown !== []) {
+            throw new \RuntimeException(sprintf(
+                "PostgREST 400: mock: %s has no column(s) '%s'",
+                $entity->name,
+                implode("', '", $unknown),
+            ));
+        }
     }
 
     public function get(Entity $entity, int|string $id): ?array
