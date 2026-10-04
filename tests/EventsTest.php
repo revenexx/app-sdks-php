@@ -11,6 +11,7 @@ use Revenexx\AppSdk\Adapter\RemoteAdapter;
 use Revenexx\AppSdk\Client;
 use Revenexx\AppSdk\Entity;
 use Revenexx\AppSdk\EventDescriptor;
+use Revenexx\AppSdk\HttpError;
 
 /**
  * `$client->events()->emit()` — the PHP mirror of the TS runtime's
@@ -225,5 +226,50 @@ final class EventsTest extends TestCase
 
         $this->expectExceptionMessageMatches("/only available on the 'mock' adapter/");
         $client->events()->emitted();
+    }
+
+    // app-events AC-3 — The declared events are readable
+    #[Group('spec:app-events:AC-3')]
+    #[Group('spec:app-events')]
+    public function test_the_declared_events_are_readable(): void
+    {
+        $declared = $this->mockClient()->events()->declared();
+
+        self::assertSame('revenexx.inventories.stock.low', $declared['stock.low']->topic);
+        self::assertSame(['sku' => 'ACME-4711-BLK', 'available' => 3], $declared['stock.low']->sample);
+    }
+
+    // app-events AC-6 — A refusal from the routine is an error, not a leak
+    #[Group('spec:app-events:AC-6')]
+    #[Group('spec:app-events')]
+    public function test_a_refusal_from_the_routine_is_an_http_error(): void
+    {
+        $adapter = new RemoteAdapter(
+            endpoint: 'https://x',
+            transport: static fn (): array => ['status' => 400, 'body' => '{"code":"22023","message":"events: stock.low is not an app-emitted event of revenexx/orders"}'],
+        );
+        $entity = $this->stockLevels();
+        $client = new Client($adapter, [$entity->name => $entity], 'revenexx__inventories__emit', $this->declared());
+
+        try {
+            $client->events()->emit('stock.low');
+            self::fail('expected a refusal');
+        } catch (HttpError $e) {
+            self::assertSame(400, $e->status);
+            self::assertStringNotContainsString('revenexx/orders', $e->getMessage());
+        }
+    }
+
+    // app-events AC-10 — The record cannot be rewritten through what it hands back
+    #[Group('spec:app-events:AC-10')]
+    #[Group('spec:app-events')]
+    public function test_the_record_cannot_be_rewritten_through_what_it_hands_back(): void
+    {
+        $client = $this->mockClient();
+        $client->events()->emit('stock.low', ['available' => 3]);
+        $copy = $client->events()->emitted();
+        $copy[0]['data']['available'] = 99;
+
+        self::assertSame(['available' => 3], $client->events()->emitted()[0]['data']);
     }
 }

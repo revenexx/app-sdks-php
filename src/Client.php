@@ -67,6 +67,24 @@ final class Client
         return $this->adapter->list($entity, $query);
     }
 
+    /**
+     * The rows of one page and the number of rows matching overall. Needs an
+     * adapter that can count ({@see CountsRows}); one that cannot says so
+     * rather than answering a total it does not know.
+     *
+     * @param array<string, mixed> $query
+     * @return array{items: array<int, array<string, mixed>>, total: int, limit: ?int, offset: ?int}
+     */
+    public function page(Entity $entity, array $query = []): array
+    {
+        $this->guard($entity, 'list', 'page');
+        if (! $this->adapter instanceof CountsRows) {
+            throw new \RuntimeException("{$entity->name}.page() is not supported by the '{$this->adapter->kind()}' adapter");
+        }
+
+        return $this->adapter->page($entity, $query);
+    }
+
     /** @return array<string, mixed>|null */
     public function get(Entity $entity, int|string $id): ?array
     {
@@ -99,7 +117,7 @@ final class Client
     {
         $this->guard($entity, 'update');
         if ($patch === []) {
-            throw new \InvalidArgumentException(self::EMPTY_UPDATE_MESSAGE);
+            throw HttpError::badRequest(self::EMPTY_UPDATE_MESSAGE, null, 'empty_update');
         }
 
         return $this->adapter->update($entity, $id, $patch);
@@ -124,10 +142,10 @@ final class Client
     {
         $this->guard($entity, 'update', 'updateIf');
         if ($where === []) {
-            throw new \InvalidArgumentException(self::EMPTY_CONDITION_MESSAGE);
+            throw HttpError::badRequest(self::EMPTY_CONDITION_MESSAGE, null, 'empty_condition');
         }
         if ($patch === []) {
-            throw new \InvalidArgumentException(self::EMPTY_UPDATE_MESSAGE);
+            throw HttpError::badRequest(self::EMPTY_UPDATE_MESSAGE, null, 'empty_update');
         }
         if (! $this->adapter instanceof UpdatesConditionally) {
             throw new \RuntimeException(
@@ -149,8 +167,9 @@ final class Client
     {
         if (! $entity->allows($op)) {
             $method ??= $op;
-            throw new \RuntimeException(
+            throw HttpError::forbidden(
                 "{$entity->name}.{$method}() is not permitted — add the matching access to manifest.permissions for '{$entity->name}'",
+                'not_permitted',
             );
         }
     }

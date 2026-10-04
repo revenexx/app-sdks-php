@@ -52,6 +52,22 @@ final class QueryTest extends TestCase
         Query::toParams(['where' => ['tags' => ['op' => 'cs', 'value' => '{a}']]]);
     }
 
+    // query-language AC-7 — A null value means "is null"
+    #[Group('spec:query-language:AC-7')]
+    #[Group('spec:query-language')]
+    public function testANullValueFiltersForNull(): void
+    {
+        $this->assertSame('deleted_at=is.null', Query::toParams(['where' => ['deleted_at' => null]]));
+        $e = new Entity('greetings', 'g', 'id', ['id' => [], 'name' => [], 'locale' => []], ['list']);
+        $db = new Client(AdapterRegistry::create('mock', ['seed' => ['greetings' => [
+            ['id' => '1', 'name' => 'a', 'locale' => null],
+            ['id' => '2', 'name' => 'b', 'locale' => 'en'],
+            ['id' => '3', 'name' => 'c'],
+        ]]]), ['greetings' => $e]);
+        // A row that does not carry the column reads it as null, as Postgres would.
+        $this->assertSame(['1', '3'], array_column($db->list($e, ['where' => ['locale' => null], 'order' => 'id.asc']), 'id'));
+    }
+
     // runtime-adapter AC-4 — Another backend plugs in without changing App code
     #[Group('spec:runtime-adapter:AC-4')]
     #[Group('spec:runtime-adapter')]

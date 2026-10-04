@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Revenexx\AppSdk\Adapter;
 
 use Revenexx\AppSdk\Adapter;
+use Revenexx\AppSdk\CountsRows;
+use Revenexx\AppSdk\HttpError;
 use Revenexx\AppSdk\EmitsEvents;
 use Revenexx\AppSdk\EmitTarget;
 use Revenexx\AppSdk\Entity;
@@ -17,7 +19,7 @@ use Revenexx\AppSdk\UpdatesConditionally;
  * fixtures. Does NOT enforce RLS, constraints, triggers or PostgREST semantics —
  * run the `remote` adapter against a dev tenant for that fidelity before deploy.
  */
-final class MockAdapter implements Adapter, EmitsEvents, RecordsEvents, UpdatesConditionally
+final class MockAdapter implements Adapter, CountsRows, EmitsEvents, RecordsEvents, UpdatesConditionally
 {
     /** @var array<string, array<array-key, array<string, mixed>>> */
     private array $store = [];
@@ -51,11 +53,44 @@ final class MockAdapter implements Adapter, EmitsEvents, RecordsEvents, UpdatesC
 
     public function list(Entity $entity, array $query = []): array
     {
+        return self::shape($this->filter($entity, $query), $query);
+    }
+
+    public function page(Entity $entity, array $query = []): array
+    {
+        $rows = $this->filter($entity, $query);
+
+        return [
+            'items' => self::shape($rows, $query),
+            'total' => \count($rows),
+            'limit' => isset($query['limit']) ? (int) $query['limit'] : null,
+            'offset' => isset($query['offset']) ? (int) $query['offset'] : null,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $query
+     * @return array<int, array<string, mixed>>
+     */
+    private function filter(Entity $entity, array $query): array
+    {
         self::assertWhereColumns($entity, $query['where'] ?? []);
-        $rows = array_values(array_filter(
+
+        return array_values(array_filter(
             $this->table($entity),
             static fn (array $r): bool => Query::matches($r, $query['where'] ?? []),
         ));
+    }
+
+    /**
+     * Apply order → offset → limit → select to an already-filtered row set.
+     *
+     * @param array<int, array<string, mixed>> $rows
+     * @param array<string, mixed>             $query
+     * @return array<int, array<string, mixed>>
+     */
+    private static function shape(array $rows, array $query): array
+    {
 
         if (! empty($query['order'])) {
             [$col, $dir] = array_pad(explode('.', (string) $query['order']), 2, 'asc');
@@ -83,8 +118,8 @@ final class MockAdapter implements Adapter, EmitsEvents, RecordsEvents, UpdatesC
 
     /**
      * A `where` on a column the entity does not have. PostgREST answers that
-     * with 400 (SQLSTATE 42703), which the remote adapter throws as
-     * "PostgREST 400: …"; the mock used to filter every row out and return [],
+     * with 400 (SQLSTATE 42703), which the remote adapter maps to `400
+     * bad_request`; the mock used to filter every row out and return [],
      * so a test passed against a call that fails in production. Mirrors the TS
      * mock. `tenant_id` exists on every table without being declared; an
      * entity without column metadata is not checked.
@@ -101,11 +136,13 @@ final class MockAdapter implements Adapter, EmitsEvents, RecordsEvents, UpdatesC
             static fn (string|int $k): bool => ! \array_key_exists($k, $entity->columns) && $k !== 'tenant_id',
         ));
         if ($unknown !== []) {
-            throw new \RuntimeException(sprintf(
-                "PostgREST 400: mock: %s has no column(s) '%s'",
-                $entity->name,
-                implode("', '", $unknown),
-            ));
+            // Same status, code and message as the remote adapter; the offending
+            // key travels on serverDetail (logged, not returned).
+            throw new HttpError(400, 'the request could not be processed', null, 'bad_request', [
+                'source' => 'mock',
+                'entity' => $entity->name,
+                'unknownColumns' => $unknown,
+            ]);
         }
     }
 
@@ -129,7 +166,7 @@ final class MockAdapter implements Adapter, EmitsEvents, RecordsEvents, UpdatesC
     {
         $cur = $this->table($entity)[$id] ?? null;
         if ($cur === null) {
-            throw new \RuntimeException("mock: {$entity->name}/{$id} not found");
+            throw HttpError::notFound("mock: {$entity->name}/{$id} not found");
         }
 
         return $this->write($entity, $id, $cur, $patch);

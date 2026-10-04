@@ -10,6 +10,7 @@ use Revenexx\AppSdk\Adapter\RemoteAdapter;
 use Revenexx\AppSdk\AdapterRegistry;
 use Revenexx\AppSdk\Client;
 use Revenexx\AppSdk\Entity;
+use Revenexx\AppSdk\HttpError;
 
 final class ClientTest extends TestCase
 {
@@ -109,9 +110,16 @@ final class ClientTest extends TestCase
         // tenant_id exists on every table without being declared.
         $this->assertSame([], $db->list($e, ['where' => ['tenant_id' => 't1']]));
 
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage("PostgREST 400: mock: greetings has no column(s) 'organization_id'");
-        $db->list($e, ['where' => ['organization_id' => 'o1']]);
+        // The remote adapter maps PostgREST's 42703 to exactly this answer.
+        try {
+            $db->list($e, ['where' => ['organization_id' => 'o1']]);
+            $this->fail('expected a 400');
+        } catch (HttpError $err) {
+            $this->assertSame([400, 'bad_request', 'the request could not be processed'], [$err->status, $err->errorCode, $err->getMessage()]);
+            $this->assertSame(['organization_id'], $err->serverDetail['unknownColumns']);
+        }
+        $this->expectException(HttpError::class);
+        $db->page($e, ['where' => ['organization_id' => 'o1']]);
     }
 
     // data-client AC-2 — An update with nothing to update is refused before any request
@@ -122,9 +130,12 @@ final class ClientTest extends TestCase
         $e = $this->greetings();
         $db = $this->client($e, ['greetings' => [['id' => '1', 'name' => 'a']]]);
 
-        $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage(Client::EMPTY_UPDATE_MESSAGE);
-        $db->update($e, '1', []);
+        try {
+            $db->update($e, '1', []);
+            $this->fail('expected a 400');
+        } catch (HttpError $err) {
+            $this->assertSame([400, 'empty_update', Client::EMPTY_UPDATE_MESSAGE], [$err->status, $err->errorCode, $err->getMessage()]);
+        }
     }
 
     // data-client AC-3 — An update that matched no row is not found
@@ -139,9 +150,12 @@ final class ClientTest extends TestCase
             transport: static fn (): array => ['status' => 200, 'body' => '[]'],
         );
 
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessageMatches('/not found/');
-        $adapter->update($e, 'gone', ['message' => 'Hi']);
+        try {
+            $adapter->update($e, 'gone', ['message' => 'Hi']);
+            $this->fail('expected a 404');
+        } catch (HttpError $err) {
+            $this->assertSame([404, 'not_found'], [$err->status, $err->errorCode]);
+        }
     }
 
     // data-client AC-1 — Only the operations the manifest grants exist
@@ -154,8 +168,12 @@ final class ClientTest extends TestCase
 
         $this->assertCount(0, $db->list($e));
 
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessageMatches('/not permitted/');
-        $db->create($e, ['name' => 'x']);
+        try {
+            $db->create($e, ['name' => 'x']);
+            $this->fail('expected a 403');
+        } catch (HttpError $err) {
+            $this->assertStringContainsString('greetings.create() is not permitted', $err->getMessage());
+            $this->assertSame([403, 'not_permitted'], [$err->status, $err->errorCode]);
+        }
     }
 }

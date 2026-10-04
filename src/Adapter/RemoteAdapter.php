@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace Revenexx\AppSdk\Adapter;
 
 use Revenexx\AppSdk\Adapter;
+use Revenexx\AppSdk\CountsRows;
 use Revenexx\AppSdk\EmitsEvents;
 use Revenexx\AppSdk\EmitTarget;
 use Revenexx\AppSdk\Entity;
+use Revenexx\AppSdk\HttpError;
+use Revenexx\AppSdk\PostgrestError;
 use Revenexx\AppSdk\Query;
 use Revenexx\AppSdk\UpdatesConditionally;
 
@@ -17,11 +20,18 @@ use Revenexx\AppSdk\UpdatesConditionally;
  * Bearer JWT; the tenant header rides alongside. The HTTP transport is
  * injectable so it can be unit-tested without a live PostgREST.
  *
- * @phpstan-type Transport callable(string, string, array<int, string>, ?string): array{status: int, body: string}
+ * A failed request is an {@see HttpError} mapped by {@see PostgrestError}: the
+ * status it deserves and a message naming nothing internal.
+ *
+ * The transport answers `['status' => int, 'body' => string]` and may add
+ * `'headers' => ['content-range' => '0-9/247', …]` (lower-case names), which
+ * `page()` reads the total from.
+ *
+ * @phpstan-type Transport callable(string, string, array<int, string>, ?string): array{status: int, body: string, headers?: array<string, string>}
  */
-final class RemoteAdapter implements Adapter, EmitsEvents, UpdatesConditionally
+final class RemoteAdapter implements Adapter, CountsRows, EmitsEvents, UpdatesConditionally
 {
-    /** @var callable(string, string, array<int, string>, ?string): array{status: int, body: string} */
+    /** @var callable(string, string, array<int, string>, ?string): array{status: int, body: string, headers?: array<string, string>} */
     private $transport;
 
     public function __construct(
@@ -29,6 +39,8 @@ final class RemoteAdapter implements Adapter, EmitsEvents, UpdatesConditionally
         private readonly ?string $token = null,
         private readonly ?string $tenant = null,
         ?callable $transport = null,
+        private readonly ?string $market = null,
+        private readonly string $kind = 'remote',
     ) {
         if ($endpoint === '') {
             throw new \InvalidArgumentException('remote adapter: endpoint is required');
@@ -38,29 +50,64 @@ final class RemoteAdapter implements Adapter, EmitsEvents, UpdatesConditionally
 
     public function kind(): string
     {
-        return 'remote';
+        return $this->kind;
     }
 
     public function list(Entity $entity, array $query = []): array
     {
         $qs = Query::toParams($query);
+        $answer = $this->send('GET', "/{$entity->table}" . ($qs !== '' ? "?{$qs}" : ''));
+        if ($answer['status'] < 200 || $answer['status'] >= 300) {
+            // An offset past the end of the result set is a legitimate request.
+            if (PostgrestError::rangeNotSatisfiable($answer['status'], $answer['body']) !== null) {
+                return [];
+            }
+            throw PostgrestError::map($answer['status'], $answer['body'], 'GET', $entity->table);
+        }
 
-        return $this->request('GET', "/{$entity->table}" . ($qs !== '' ? "?{$qs}" : '')) ?? [];
+        return self::decode($answer['body']) ?? [];
+    }
+
+    /**
+     * One request: the page in the body, the total in `Content-Range`
+     * (`0-9/247` or `*\/247`) when asked for an exact count.
+     */
+    public function page(Entity $entity, array $query = []): array
+    {
+        $qs = Query::toParams($query);
+        $answer = $this->send('GET', "/{$entity->table}" . ($qs !== '' ? "?{$qs}" : ''), null, 'count=exact');
+        $range = $answer['headers']['content-range'] ?? '';
+        $total = preg_match('#/(\d+)$#', $range, $m) ? (int) $m[1] : null;
+        $limit = isset($query['limit']) ? (int) $query['limit'] : null;
+        $offset = isset($query['offset']) ? (int) $query['offset'] : null;
+
+        if ($answer['status'] < 200 || $answer['status'] >= 300) {
+            $overflow = PostgrestError::rangeNotSatisfiable($answer['status'], $answer['body']);
+            if ($overflow !== null) {
+                return ['items' => [], 'total' => $total ?? $overflow, 'limit' => $limit, 'offset' => $offset];
+            }
+            throw PostgrestError::map($answer['status'], $answer['body'], 'GET', $entity->table);
+        }
+        $items = self::decode($answer['body']) ?? [];
+
+        return ['items' => $items, 'total' => $total ?? \count($items), 'limit' => $limit, 'offset' => $offset];
     }
 
     public function get(Entity $entity, int|string $id): ?array
     {
-        $rows = $this->request('GET', "/{$entity->table}?{$entity->pk}=eq." . rawurlencode((string) $id) . '&limit=1');
+        $rows = $this->request('GET', "/{$entity->table}?{$entity->pk}=eq." . rawurlencode((string) $id) . '&limit=1', null, null, $entity->table);
 
         return $rows[0] ?? null;
     }
 
     public function create(Entity $entity, array $data): array
     {
-        $rows = $this->request('POST', "/{$entity->table}", $data, 'return=representation');
+        $rows = $this->request('POST', "/{$entity->table}", $data, 'return=representation', $entity->table);
 
+        // An insert that reports success but returns no row is not readable back
+        // (an RLS policy that permits INSERT but not SELECT): a described 5xx.
         return $this->oneRow($rows)
-            ?? throw new \RuntimeException("app-sdk: {$entity->name} was created but could not be read back");
+            ?? throw new HttpError(500, 'the record was created but could not be read back', null, 'empty_representation');
     }
 
     public function update(Entity $entity, int|string $id, array $patch): array
@@ -70,13 +117,13 @@ final class RemoteAdapter implements Adapter, EmitsEvents, UpdatesConditionally
             "/{$entity->table}?{$entity->pk}=eq." . rawurlencode((string) $id),
             $patch,
             'return=representation',
+            $entity->table,
         );
 
         // PostgREST reports a write that touched no row as `200 []`. Returning
         // that empty array as if it were the updated record hides a missing row
         // behind a success; say so instead.
-        return $this->oneRow($rows)
-            ?? throw new \RuntimeException("app-sdk: {$entity->name}/{$id} not found");
+        return $this->oneRow($rows) ?? throw HttpError::notFound();
     }
 
     /**
@@ -92,6 +139,7 @@ final class RemoteAdapter implements Adapter, EmitsEvents, UpdatesConditionally
             "/{$entity->table}?{$entity->pk}=eq." . rawurlencode((string) $id) . '&' . Query::toParams(['where' => $where]),
             $patch,
             'return=representation',
+            $entity->table,
         );
 
         return $this->oneRow($rows);
@@ -99,7 +147,7 @@ final class RemoteAdapter implements Adapter, EmitsEvents, UpdatesConditionally
 
     public function remove(Entity $entity, int|string $id): void
     {
-        $this->request('DELETE', "/{$entity->table}?{$entity->pk}=eq." . rawurlencode((string) $id));
+        $this->request('DELETE', "/{$entity->table}?{$entity->pk}=eq." . rawurlencode((string) $id), null, null, $entity->table);
     }
 
     /**
@@ -136,9 +184,10 @@ final class RemoteAdapter implements Adapter, EmitsEvents, UpdatesConditionally
         // request reached something other than the routine we asked for.
         // Failing here beats handing the caller an event id of null.
         if ($id === null || $topic === null) {
-            throw new \RuntimeException(
-                "app-sdk: {$target->fn} returned no event id for '{$target->name}'",
-            );
+            throw new HttpError(502, 'the event service returned no event id', null, 'emit_no_id', [
+                'fn' => $target->fn,
+                'event' => $target->name,
+            ]);
         }
 
         return ['id' => $id, 'topic' => $topic];
@@ -165,7 +214,21 @@ final class RemoteAdapter implements Adapter, EmitsEvents, UpdatesConditionally
      * @param array<string, mixed>|null $body
      * @return array<int, array<string, mixed>>|null
      */
-    private function request(string $method, string $path, ?array $body = null, ?string $prefer = null): ?array
+    private function request(string $method, string $path, ?array $body = null, ?string $prefer = null, ?string $table = null): ?array
+    {
+        $answer = $this->send($method, $path, $body, $prefer);
+        if ($answer['status'] < 200 || $answer['status'] >= 300) {
+            throw PostgrestError::map($answer['status'], $answer['body'], $method, $table);
+        }
+
+        return self::decode($answer['body']);
+    }
+
+    /**
+     * @param array<string, mixed>|null $body
+     * @return array{status: int, body: string, headers: array<string, string>}
+     */
+    private function send(string $method, string $path, ?array $body = null, ?string $prefer = null): array
     {
         $headers = ['Accept: application/json', 'Content-Type: application/json'];
         if ($this->token !== null && $this->token !== '') {
@@ -174,39 +237,58 @@ final class RemoteAdapter implements Adapter, EmitsEvents, UpdatesConditionally
         if ($this->tenant !== null && $this->tenant !== '') {
             $headers[] = 'X-Revenexx-Tenant: ' . $this->tenant;
         }
+        // The active market, forwarded to the data layer like the TS runtime does.
+        if ($this->market !== null && $this->market !== '') {
+            $headers[] = 'X-Revenexx-Market: ' . $this->market;
+        }
         if ($prefer !== null) {
             $headers[] = 'Prefer: ' . $prefer;
         }
 
         $payload = $body !== null ? (string) json_encode($body) : '';
-        ['status' => $status, 'body' => $responseBody] = ($this->transport)(
+        $answer = ($this->transport)(
             $method,
             rtrim($this->endpoint, '/') . $path,
             $headers,
             $payload === '' ? null : $payload,
         );
 
-        if ($status < 200 || $status >= 300) {
-            throw new \RuntimeException("PostgREST {$status}: {$responseBody}");
-        }
+        return [
+            'status' => (int) $answer['status'],
+            'body' => (string) $answer['body'],
+            'headers' => array_change_key_case($answer['headers'] ?? []),
+        ];
+    }
 
-        $decoded = $responseBody !== '' ? json_decode($responseBody, true) : null;
+    /** @return array<int|string, mixed>|null */
+    private static function decode(string $body): ?array
+    {
+        $decoded = $body !== '' ? json_decode($body, true) : null;
 
         return \is_array($decoded) ? $decoded : null;
     }
 
     /**
-     * @return callable(string, string, array<int, string>, ?string): array{status: int, body: string}
+     * @return callable(string, string, array<int, string>, ?string): array{status: int, body: string, headers: array<string, string>}
      */
     private static function curlTransport(): callable
     {
         return static function (string $method, string $url, array $headers, ?string $body): array {
+            $responseHeaders = [];
             $ch = curl_init($url);
             curl_setopt_array($ch, [
                 CURLOPT_CUSTOMREQUEST => $method,
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_TIMEOUT => 15,
                 CURLOPT_HTTPHEADER => $headers,
+                CURLOPT_HEADERFUNCTION => static function ($ch, string $line) use (&$responseHeaders): int {
+                    $parts = explode(':', $line, 2);
+                    if (\count($parts) === 2) {
+                        $responseHeaders[strtolower(trim($parts[0]))] = trim($parts[1]);
+                    }
+
+                    return \strlen($line);
+                },
             ]);
             if ($body !== null) {
                 curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
@@ -215,7 +297,7 @@ final class RemoteAdapter implements Adapter, EmitsEvents, UpdatesConditionally
             $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
 
-            return ['status' => $status, 'body' => $responseBody];
+            return ['status' => $status, 'body' => $responseBody, 'headers' => $responseHeaders];
         };
     }
 }

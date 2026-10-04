@@ -11,6 +11,7 @@ use Revenexx\AppSdk\Adapter\RemoteAdapter;
 use Revenexx\AppSdk\AdapterRegistry;
 use Revenexx\AppSdk\Client;
 use Revenexx\AppSdk\Entity;
+use Revenexx\AppSdk\HttpError;
 
 /**
  * `updateIf($entity, $id, $where, $patch)` — compare-and-set, mirroring the TS
@@ -88,9 +89,9 @@ final class ConditionalUpdateTest extends TestCase
 
         try {
             $db->updateIf($e, 'o1', ['stauts' => 'placing'], ['status' => 'placed']);
-            self::fail('expected a PostgREST 400');
-        } catch (\RuntimeException $ex) {
-            self::assertStringStartsWith('PostgREST 400:', $ex->getMessage());
+            self::fail('expected a 400');
+        } catch (HttpError $ex) {
+            self::assertSame([400, 'bad_request'], [$ex->status, $ex->errorCode]);
         }
         self::assertSame('placing', $db->get($e, 'o1')['status']);
     }
@@ -173,9 +174,9 @@ final class ConditionalUpdateTest extends TestCase
 
         try {
             $db->updateIf($e, 'o1', [], ['status' => 'placed']);
-            $this->fail('expected an InvalidArgumentException');
-        } catch (\InvalidArgumentException $err) {
-            $this->assertSame(Client::EMPTY_CONDITION_MESSAGE, $err->getMessage());
+            $this->fail('expected a 400');
+        } catch (HttpError $err) {
+            $this->assertSame([400, 'empty_condition', Client::EMPTY_CONDITION_MESSAGE], [$err->status, $err->errorCode, $err->getMessage()]);
         }
         $this->assertSame([], $calls);
     }
@@ -187,7 +188,7 @@ final class ConditionalUpdateTest extends TestCase
     {
         $e = $this->orders();
 
-        $this->expectException(\InvalidArgumentException::class);
+        $this->expectException(HttpError::class);
         $this->expectExceptionMessage(Client::EMPTY_UPDATE_MESSAGE);
         $this->mock($e)->updateIf($e, 'o1', ['status' => 'placing'], []);
     }
@@ -199,7 +200,7 @@ final class ConditionalUpdateTest extends TestCase
     {
         $e = $this->orders(['list', 'get']);
 
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(HttpError::class);
         $this->expectExceptionMessageMatches('/orders\.updateIf\(\) is not permitted/');
         $this->mock($e)->updateIf($e, 'o1', ['status' => 'placing'], ['status' => 'placed']);
     }

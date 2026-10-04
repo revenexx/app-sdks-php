@@ -6,9 +6,10 @@ namespace Revenexx\AppSdk;
 
 use Revenexx\AppSdk\Adapter\MockAdapter;
 use Revenexx\AppSdk\Adapter\RemoteAdapter;
+use Revenexx\AppSdk\Adapter\RuntimeAdapter;
 
 /**
- * Adapter registry. Built-ins (mock | remote) register lazily; add a new
+ * Adapter registry. Built-ins (mock | remote | runtime) register lazily; add a new
  * backend by calling `AdapterRegistry::register('my-kind', fn ($config) => …)`
  * before `Db::create()` — no changes to the client or generated code.
  */
@@ -59,6 +60,9 @@ final class AdapterRegistry
             $c['token'] ?? null,
             $c['tenant'] ?? null,
             $c['transport'] ?? null,
+            $c['market'] ?? null,
         );
+        // In-function (production): configured from the request it serves.
+        self::$factories['runtime'] ??= static fn (array $c): Adapter => RuntimeAdapter::create($c);
     }
 }
