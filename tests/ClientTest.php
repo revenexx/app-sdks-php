@@ -80,6 +80,19 @@ final class ClientTest extends TestCase
         $this->assertCount(2, $gte);
     }
 
+    public function testMockRefusesAWhereOnAnUndeclaredColumnLikePostgrest(): void
+    {
+        $e = $this->greetings();
+        $db = $this->client($e, ['greetings' => [['id' => '1', 'name' => 'a']]]);
+
+        // tenant_id exists on every table without being declared.
+        $this->assertSame([], $db->list($e, ['where' => ['tenant_id' => 't1']]));
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage("PostgREST 400: mock: greetings has no column(s) 'organization_id'");
+        $db->list($e, ['where' => ['organization_id' => 'o1']]);
+    }
+
     public function testUpdateWithAnEmptyPatchIsRejected(): void
     {
         $e = $this->greetings();
