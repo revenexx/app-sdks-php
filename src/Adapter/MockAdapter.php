@@ -135,8 +135,13 @@ final class MockAdapter implements Adapter, EmitsEvents, RecordsEvents, UpdatesC
         return $this->write($entity, $id, $cur, $patch);
     }
 
+    /**
+     * A condition on a column the entity does not have is PostgREST's 400, not
+     * a lost race: answering null would read as "somebody else moved it".
+     */
     public function updateIf(Entity $entity, int|string $id, array $where, array $patch): ?array
     {
+        self::assertWhereColumns($entity, $where);
         $cur = $this->table($entity)[$id] ?? null;
         if ($cur === null || ! Query::matches($cur, $where)) {
             return null;

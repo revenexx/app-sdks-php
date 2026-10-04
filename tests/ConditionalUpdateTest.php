@@ -71,6 +71,20 @@ final class ConditionalUpdateTest extends TestCase
         $this->assertSame('placing', $db->get($e, 'o1')['status'] ?? null);
     }
 
+    public function testMockRefusesAConditionOnAnUndeclaredColumnLikePostgrest(): void
+    {
+        $e = $this->orders();
+        $db = $this->mock($e);
+
+        try {
+            $db->updateIf($e, 'o1', ['stauts' => 'placing'], ['status' => 'placed']);
+            self::fail('expected a PostgREST 400');
+        } catch (\RuntimeException $ex) {
+            self::assertStringStartsWith('PostgREST 400:', $ex->getMessage());
+        }
+        self::assertSame('placing', $db->get($e, 'o1')['status']);
+    }
+
     public function testMockReturnsNullForAMissingRow(): void
     {
         $e = $this->orders();
