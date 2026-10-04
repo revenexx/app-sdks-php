@@ -47,7 +47,7 @@ return static function ($context) use ($settings) {
 ```
 
 The reference App is `examples/sample-app/php`: `Db.php` (generated), `app.php`
-and `main.php`. It runs as a smoke test in this package's suite.
+and `main.php`. It runs as a smoke test in the monorepo's suite.
 
 **Answer through `$c->json()`, never `$context->res->json()`.** The runtime's own
 `json()` encodes with `JSON_FORCE_OBJECT`, which turns every list into an object
@@ -72,18 +72,16 @@ or constraint name reaches the caller.
 
 ## Install
 
-Not published to a registry yet. No workflow releases it, and Composer cannot read
-this monorepo's `@revenexx/app-sdk@x.y.z` tags. Publishing, the PHP runtime on the
-platform, deploy and scaffold are
-[RAD-190](https://linear.app/revenexx/issue/RAD-190). Until then, use it from a
-checkout through a Composer `path` repository:
-
-```json
-{
-  "repositories": [{ "type": "path", "url": "../app-sdks/php/sdk" }],
-  "require": { "revenexx/app-sdk": "*@dev" }
-}
+```bash
+composer require revenexx/app-sdk
 ```
+
+The package is published from [revenexx/app-sdks-php](https://github.com/revenexx/app-sdks-php),
+a read-only split of `php/sdk` in the revenexx/app-sdks monorepo. Changes, issues and
+pull requests belong in the monorepo; the split is overwritten on every push. Its
+tests run in the monorepo, because the parity fixture they answer lives there.
+
+Versions follow [CHANGELOG.md](CHANGELOG.md).
 
 ## Tests
 

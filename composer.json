@@ -3,6 +3,23 @@
     "description": "revenexx App SDK for PHP — typed data client (mock | remote | runtime adapters), router with one-line CRUD, settings and the acting person for revenexx App functions on the open-runtimes PHP runtime (ADR-0013 / ADR-0057).",
     "type": "library",
     "license": "MIT",
+    "keywords": [
+        "revenexx",
+        "app-sdk",
+        "postgrest",
+        "open-runtimes",
+        "sdk"
+    ],
+    "homepage": "https://github.com/revenexx/app-sdks-php",
+    "authors": [
+        {
+            "name": "revenexx",
+            "homepage": "https://revenexx.com"
+        }
+    ],
+    "support": {
+        "source": "https://github.com/revenexx/app-sdks-php"
+    },
     "require": {
         "php": ">=8.2",
         "ext-curl": "*",
@@ -19,10 +36,7 @@
     "autoload-dev": {
         "psr-4": {
             "Revenexx\\AppSdk\\Tests\\": "tests/"
-        },
-        "classmap": [
-            "../../examples/sample-app/php/Db.php"
-        ]
+        }
     },
     "scripts": {
         "test": "phpunit"

@@ -1,0 +1,5 @@
+# What a Composer install of revenexx/app-sdk does not need. The split repo
+# (revenexx/app-sdks-php) keeps them; the dist archive Packagist serves does not.
+/tests              export-ignore
+/phpunit.xml.dist   export-ignore
+/.gitattributes     export-ignore

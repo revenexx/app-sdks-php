@@ -20,7 +20,12 @@ final class ExampleAppTest extends TestCase
 {
     public function testTheReferenceAppAnswersThroughTheWholeStack(): void
     {
-        $build = require __DIR__ . '/../../../examples/sample-app/php/app.php';
+        $example = __DIR__ . '/../../../examples/sample-app/php';
+        if (! is_dir($example)) {
+            // The split repo (revenexx/app-sdks-php) carries php/sdk alone.
+            self::markTestSkipped('the reference App lives in the revenexx/app-sdks monorepo');
+        }
+        $build = require $example . '/app.php';
         $client = new Client(AdapterRegistry::create('mock', ['seed' => ['greetings' => []]]), Db::entities());
         $settings = new Settings([
             'app' => 'sample-app',
