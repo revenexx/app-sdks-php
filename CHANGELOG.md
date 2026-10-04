@@ -6,6 +6,17 @@ revenexx/app-sdks-php, which Packagist reads. The JavaScript package
 (`@revenexx/app-sdk`) is versioned separately. The two are held to one contract
 by the parity fixture, not by a shared version number.
 
+## 1.1.0
+
+- **Readable refusals:** every refusal body also carries `message` (= `error`) and
+  `type` (= `code`), the names the platform client reads. Its exception now carries
+  the App's reason and code instead of an empty message (RAD-98).
+- **`Refusal::of($e)`** reads a refusal into status, code, message, details and the
+  answering App. It handles this App's own `HttpError` and another App's refusal
+  caught from the platform client alike. For a crash it returns null.
+- **An uncaught refusal from another App is logged as what the far side said.**
+  The caller still gets `500 internal_error`.
+
 ## 1.0.0
 
 The first release. The surface is bound under semver from here, under the same

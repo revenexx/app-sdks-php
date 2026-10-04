@@ -169,8 +169,8 @@ final class App
             }
             if ($matched === null) {
                 return $pathExists
-                    ? $respond(['error' => "method {$method} not allowed for {$path}", 'code' => 'method_not_allowed'], 405)
-                    : $respond(['error' => "no route for {$method} {$path}", 'code' => 'no_route', 'routes' => $this->routes()], 404);
+                    ? $respond(HttpError::refusalBody("method {$method} not allowed for {$path}", 'method_not_allowed'), 405)
+                    : $respond([...HttpError::refusalBody("no route for {$method} {$path}", 'no_route'), 'routes' => $this->routes()], 404);
             }
 
             // Gateway-extracted params win over our own match, for safety.
@@ -201,10 +201,15 @@ final class App
 
             return $respond($e->body(), $e->status);
         } catch (\Throwable $e) {
-            // Anything that is not an HttpError is a fault, not an answer.
-            $error("unhandled error on {$method} {$path}: {$e->getMessage()}");
+            // Anything that is not an HttpError is a fault, not an answer. Another
+            // App's refusal nobody caught is logged as what the far side said.
+            $upstream = \Revenexx\AppSdk\Refusal::of($e);
+            $why = $upstream !== null
+                ? trim(preg_replace('/\s+/', ' ', 'refused by ' . ($upstream->app ?? 'another app') . ": {$upstream->status} " . ($upstream->code ?? '') . " {$upstream->message}") ?? '')
+                : $e->getMessage();
+            $error("unhandled error on {$method} {$path}: {$why}");
 
-            return $respond(['error' => 'internal error', 'code' => 'internal_error'], 500);
+            return $respond(HttpError::refusalBody('internal error', 'internal_error'), 500);
         }
     }
 

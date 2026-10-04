@@ -50,16 +50,28 @@ class HttpError extends \RuntimeException
     }
 
     /**
-     * The response body a caller sees: `error`, plus `code` and `details` when
-     * set. `serverDetail` is deliberately absent.
+     * The response body a caller sees. `serverDetail` is deliberately absent.
      *
      * @return array<string, mixed>
      */
     public function body(): array
     {
+        return self::refusalBody($this->getMessage(), $this->errorCode, $this->details);
+    }
+
+    /**
+     * The body every refusal is answered with: `error` is the message; `message`
+     * and `type` repeat the message and the code under the names the platform
+     * client reads, so its exception carries the App's reason and code instead of
+     * nothing (RAD-98). Same shape as the TS runtime.
+     *
+     * @return array<string, mixed>
+     */
+    public static function refusalBody(string $message, ?string $code = null, mixed $details = null): array
+    {
         return array_filter(
-            ['error' => $this->getMessage(), 'code' => $this->errorCode, 'details' => $this->details],
-            static fn (mixed $v): bool => $v !== null,
+            ['error' => $message, 'message' => $message, 'code' => $code, 'type' => $code, 'details' => $details],
+            static fn (mixed $v): bool => $v !== null && $v !== '',
         );
     }
 }

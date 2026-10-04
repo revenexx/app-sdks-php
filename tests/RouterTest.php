@@ -95,9 +95,9 @@ final class RouterTest extends TestCase
         $db = new Client(new MockAdapter(), ['things' => $readOnly]);
         $app->get('/forbidden', static fn () => $db->create($readOnly, []));
 
-        $this->assertSame(['error' => 'gone', 'code' => 'not_found'], FakeContext::call($app, 'GET', '/missing')['data']);
+        $this->assertSame(['error' => 'gone', 'message' => 'gone', 'code' => 'not_found', 'type' => 'not_found'], FakeContext::call($app, 'GET', '/missing')['data']);
         $teapot = FakeContext::call($app, 'GET', '/teapot');
-        $this->assertSame([418, ['error' => 'short and stout', 'details' => ['hint' => 'tip me over']]], [$teapot['status'], $teapot['data']]);
+        $this->assertSame([418, ['error' => 'short and stout', 'message' => 'short and stout', 'details' => ['hint' => 'tip me over']]], [$teapot['status'], $teapot['data']]);
         $forbidden = FakeContext::call($app, 'GET', '/forbidden');
         $this->assertSame([403, 'not_permitted'], [$forbidden['status'], $forbidden['data']['code']]);
         $this->assertSame(
@@ -116,7 +116,7 @@ final class RouterTest extends TestCase
         $app->get('/sounds-forbidden', static fn () => throw new \RuntimeException('this is not permitted, says the App'));
 
         $boom = FakeContext::call($app, 'GET', '/boom');
-        $this->assertSame([500, ['error' => 'internal error', 'code' => 'internal_error']], [$boom['status'], $boom['data']]);
+        $this->assertSame([500, ['error' => 'internal error', 'message' => 'internal error', 'code' => 'internal_error', 'type' => 'internal_error']], [$boom['status'], $boom['data']]);
         $this->assertStringNotContainsString('kaput', $boom['raw']);
         $this->assertStringContainsString('kaput', implode("\n", $boom['logs']));
         $this->assertSame(500, FakeContext::call($app, 'GET', '/sounds-forbidden')['status']);

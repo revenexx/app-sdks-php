@@ -13,6 +13,8 @@ use Revenexx\AppSdk\Client;
 use Revenexx\AppSdk\Entity;
 use Revenexx\AppSdk\HttpError;
 use Revenexx\AppSdk\Query;
+use Revenexx\AppSdk\Refusal;
+use Revenexx\AppSdk\Tests\Support\PlatformException;
 use Revenexx\AppSdk\Router\Actor;
 use Revenexx\AppSdk\Router\App;
 use Revenexx\AppSdk\Router\Crud;
@@ -255,5 +257,36 @@ final class ParityTest extends TestCase
         if (isset($case['error'])) {
             self::assertSame($case['error'], $res['data']['error']);
         }
+        // The names the platform client reads (RAD-98).
+        self::assertSame([$res['data']['error'], $res['data']['code']], [$res['data']['message'], $res['data']['type']]);
+    }
+
+    /** @return iterable<string, array{array<string, mixed>, ?array<string, mixed>}> */
+    public static function refusalCases(): iterable
+    {
+        foreach (self::fixture()['refusals'] as $case) {
+            yield $case['name'] => [$case['thrown'], $case['expect']];
+        }
+    }
+
+    /**
+     * @param array<string, mixed>      $thrown
+     * @param array<string, mixed>|null $expect
+     */
+    // runtime-parity AC-8 — A refusal is read the same way in both runtimes
+    #[Group('spec:runtime-parity:AC-8')]
+    #[Group('spec:runtime-parity')]
+    #[DataProvider('refusalCases')]
+    public function testReadsTheFixturesRefusal(array $thrown, ?array $expect): void
+    {
+        $r = Refusal::of(PlatformException::thrownFrom($thrown));
+
+        self::assertSame($expect, $r === null ? null : [
+            'status' => $r->status,
+            'code' => $r->code,
+            'message' => $r->message,
+            'details' => $r->details,
+            'app' => $r->app,
+        ]);
     }
 }
