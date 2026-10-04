@@ -65,6 +65,12 @@ final class Query
             return 'in.(' . implode(',', array_map([self::class, 'scalar'], $cond)) . ')';
         }
 
+        // `eq.null` compares against the string 'null'; a null value means
+        // "is null", which is what the mock already matched. Same as TS.
+        if ($cond === null) {
+            return 'is.null';
+        }
+
         return 'eq.' . self::scalar($cond);
     }
 
