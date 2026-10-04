@@ -23,17 +23,20 @@ final class Query
     /** @param array<string, mixed> $query */
     public static function toParams(array $query): string
     {
+        // Every key and value is percent-encoded, so a value carrying `&`, `=`,
+        // a space or a non-ASCII character stays one value — the same answer
+        // the TS runtime's URLSearchParams gives. PostgREST decodes it.
         $pairs = [];
         foreach (($query['where'] ?? []) as $col => $cond) {
-            $pairs[] = $col . '=' . self::encodeCondition($cond);
+            $pairs[] = rawurlencode((string) $col) . '=' . rawurlencode(self::encodeCondition($cond));
         }
 
         if (! empty($query['select']) && \is_array($query['select'])) {
-            $pairs[] = 'select=' . implode(',', $query['select']);
+            $pairs[] = 'select=' . rawurlencode(implode(',', $query['select']));
         }
         if (! empty($query['order'])) {
             $order = (string) $query['order'];
-            $pairs[] = 'order=' . (preg_match('/\.(asc|desc)$/', $order) ? $order : $order . '.asc');
+            $pairs[] = 'order=' . rawurlencode(preg_match('/\.(asc|desc)$/', $order) ? $order : $order . '.asc');
         }
         if (isset($query['limit'])) {
             $pairs[] = 'limit=' . (int) $query['limit'];
@@ -69,6 +72,11 @@ final class Query
     {
         if (\is_bool($v)) {
             return $v ? 'true' : 'false';
+        }
+        // `['op' => 'is', 'value' => null]` is PostgREST's `is.null`; an empty
+        // string here sent `is.`, which PostgREST refuses. Same as the TS runtime.
+        if ($v === null) {
+            return 'null';
         }
 
         return (string) $v;

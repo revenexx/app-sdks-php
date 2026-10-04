@@ -15,11 +15,20 @@ $client = new Client(AdapterRegistry::create('mock'), ['greetings' => $greetings
 $row = $client->create($greetings, ['name' => 'Max']);   // defaults applied
 ```
 
-Install (via packistry):
+Not published to a registry yet (no workflow releases it, and it has no version
+tags of its own — see RAD-189). Use it from a checkout through a Composer `path`
+repository:
 
-```bash
-composer require revenexx/app-sdk
+```json
+{
+  "repositories": [{ "type": "path", "url": "../app-sdks/php/sdk" }],
+  "require": { "revenexx/app-sdk": "*@dev" }
+}
 ```
+
+It is a data client only — no router, settings reader, runtime adapter, `page()`
+or error mapping, which the JavaScript package has. `specs/runtime-parity.md`
+says what the two runtimes agree on.
 
 ## Tests
 

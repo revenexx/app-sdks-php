@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Revenexx\AppSdk\Tests;
 
+use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 use Revenexx\AppSdk\Adapter\MockAdapter;
 use Revenexx\AppSdk\Adapter\RemoteAdapter;
@@ -55,6 +56,9 @@ final class EventsTest extends TestCase
         );
     }
 
+    // app-events AC-1 — No declared event, no events client
+    #[Group('spec:app-events:AC-1')]
+    #[Group('spec:app-events')]
     public function test_an_app_without_declared_events_has_no_routine_to_call(): void
     {
         $entity = $this->stockLevels();
@@ -64,14 +68,25 @@ final class EventsTest extends TestCase
         $client->events();
     }
 
+    // app-events AC-2 — An undeclared event is refused, naming the declared ones
+    #[Group('spec:app-events:AC-2')]
+    #[Group('spec:app-events')]
     public function test_it_refuses_an_undeclared_event_and_names_the_declared_ones(): void
     {
         $client = $this->mockClient();
 
-        $this->expectExceptionMessageMatches('/not declared by this app.*stock\.low, stocktake\.completed/s');
-        $client->events()->emit('stock.exploded');
+        try {
+            $client->events()->emit('stock.exploded');
+            self::fail('expected an undeclared event to be refused');
+        } catch (\InvalidArgumentException $e) {
+            self::assertMatchesRegularExpression('/not declared by this app.*stock\.low, stocktake\.completed/s', $e->getMessage());
+        }
+        self::assertSame([], $client->events()->emitted());
     }
 
+    // app-events AC-8 — The mock records instead of publishing
+    #[Group('spec:app-events:AC-8')]
+    #[Group('spec:app-events')]
     public function test_it_records_instead_of_publishing_on_the_mock_adapter(): void
     {
         $client = $this->mockClient();
@@ -89,6 +104,9 @@ final class EventsTest extends TestCase
         self::assertStringStartsWith('evt_', $emitted[0]['result']['id']);
     }
 
+    // app-events AC-9 — A repeated id is a no-op, and the first payload stands
+    #[Group('spec:app-events:AC-9')]
+    #[Group('spec:app-events')]
     public function test_a_repeated_id_is_the_no_op_the_outbox_makes_it(): void
     {
         $client = $this->mockClient();
@@ -106,6 +124,9 @@ final class EventsTest extends TestCase
         self::assertSame(['available' => 3], $emitted[0]['data']);
     }
 
+    // app-events AC-4 — Production calls the App's own routine with its argument names
+    #[Group('spec:app-events:AC-4')]
+    #[Group('spec:app-events')]
     public function test_the_remote_adapter_calls_the_routine_with_the_routine_argument_names(): void
     {
         $captured = [];
@@ -150,6 +171,9 @@ final class EventsTest extends TestCase
         self::assertSame(['id' => 'evt_x', 'topic' => 'revenexx.inventories.stock.low'], $result);
     }
 
+    // app-events AC-5 — Options nobody passed go out empty, not missing
+    #[Group('spec:app-events:AC-5')]
+    #[Group('spec:app-events')]
     public function test_an_empty_payload_goes_out_as_an_object_not_an_array(): void
     {
         $captured = null;
@@ -173,6 +197,9 @@ final class EventsTest extends TestCase
         self::assertStringContainsString('"metadata":{}', (string) $captured);
     }
 
+    // app-events AC-7 — An answer without an event id is an error
+    #[Group('spec:app-events:AC-7')]
+    #[Group('spec:app-events')]
     public function test_an_answer_without_an_event_id_is_an_error_not_a_null(): void
     {
         $adapter = new RemoteAdapter(
@@ -187,6 +214,9 @@ final class EventsTest extends TestCase
         $client->events()->emit('stock.low');
     }
 
+    // app-events AC-11 — An adapter that cannot reach the bus says so
+    #[Group('spec:app-events:AC-11')]
+    #[Group('spec:app-events')]
     public function test_an_adapter_that_cannot_reach_the_bus_says_so(): void
     {
         $adapter = new RemoteAdapter(endpoint: 'https://x', transport: static fn (): array => ['status' => 200, 'body' => '{}']);

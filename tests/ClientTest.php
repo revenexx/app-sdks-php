@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Revenexx\AppSdk\Tests;
 
+use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 use Revenexx\AppSdk\Adapter\RemoteAdapter;
 use Revenexx\AppSdk\AdapterRegistry;
@@ -38,6 +39,12 @@ final class ClientTest extends TestCase
         );
     }
 
+    // mock-fidelity AC-1 — A created row carries its defaults and a key
+    // data-client AC-12 — The plain operations answer rows
+    #[Group('spec:mock-fidelity:AC-1')]
+    #[Group('spec:data-client:AC-12')]
+    #[Group('spec:data-client')]
+    #[Group('spec:mock-fidelity')]
     public function testMockCreateAppliesDefaultsThenCrud(): void
     {
         $e = $this->greetings();
@@ -54,11 +61,22 @@ final class ClientTest extends TestCase
 
         $upd = $db->update($e, $g['id'], ['message' => 'Hi']);
         $this->assertSame('Hi', $upd['message']);
+        $this->assertNotEmpty($upd['updated_at']);
 
         $db->remove($e, $g['id']);
         $this->assertNull($db->get($e, $g['id']));
     }
 
+    // query-language AC-1 — A value alone means equality
+    // query-language AC-3 — An operator object compares
+    // query-language AC-5 — Order, limit, offset and select shape the answer
+    // mock-fidelity AC-4 — Seeded rows are queried like stored ones
+    #[Group('spec:query-language:AC-1')]
+    #[Group('spec:query-language:AC-3')]
+    #[Group('spec:query-language:AC-5')]
+    #[Group('spec:mock-fidelity:AC-4')]
+    #[Group('spec:mock-fidelity')]
+    #[Group('spec:query-language')]
     public function testSeedFiltersOrderLimitSelect(): void
     {
         $e = $this->greetings();
@@ -80,6 +98,9 @@ final class ClientTest extends TestCase
         $this->assertCount(2, $gte);
     }
 
+    // mock-fidelity AC-2 — A condition on an undeclared column fails like PostgREST
+    #[Group('spec:mock-fidelity:AC-2')]
+    #[Group('spec:mock-fidelity')]
     public function testMockRefusesAWhereOnAnUndeclaredColumnLikePostgrest(): void
     {
         $e = $this->greetings();
@@ -93,6 +114,9 @@ final class ClientTest extends TestCase
         $db->list($e, ['where' => ['organization_id' => 'o1']]);
     }
 
+    // data-client AC-2 — An update with nothing to update is refused before any request
+    #[Group('spec:data-client:AC-2')]
+    #[Group('spec:data-client')]
     public function testUpdateWithAnEmptyPatchIsRejected(): void
     {
         $e = $this->greetings();
@@ -103,6 +127,9 @@ final class ClientTest extends TestCase
         $db->update($e, '1', []);
     }
 
+    // data-client AC-3 — An update that matched no row is not found
+    #[Group('spec:data-client:AC-3')]
+    #[Group('spec:data-client')]
     public function testRemoteUpdateThatTouchedNoRowIsNotAnEmptyRecord(): void
     {
         $e = $this->greetings();
@@ -117,6 +144,9 @@ final class ClientTest extends TestCase
         $adapter->update($e, 'gone', ['message' => 'Hi']);
     }
 
+    // data-client AC-1 — Only the operations the manifest grants exist
+    #[Group('spec:data-client:AC-1')]
+    #[Group('spec:data-client')]
     public function testPermissionGatingBlocksUnpermittedOps(): void
     {
         $e = $this->greetings(['list', 'get']); // read-only

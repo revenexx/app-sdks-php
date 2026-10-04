@@ -4,13 +4,20 @@ declare(strict_types=1);
 
 namespace Revenexx\AppSdk\Tests;
 
+use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
+use Revenexx\AppSdk\Adapter;
 use Revenexx\AppSdk\Adapter\RemoteAdapter;
+use Revenexx\AppSdk\AdapterRegistry;
+use Revenexx\AppSdk\Client;
 use Revenexx\AppSdk\Entity;
 use Revenexx\AppSdk\Query;
 
 final class QueryTest extends TestCase
 {
+    // query-language AC-6 — A query serialises to the data plane's own querystring
+    #[Group('spec:query-language:AC-6')]
+    #[Group('spec:query-language')]
     public function testToParamsSerialisesAPostgrestQuerystring(): void
     {
         $qs = Query::toParams([
@@ -35,6 +42,36 @@ final class QueryTest extends TestCase
         $this->assertSame('20', $parsed['offset']);
     }
 
+    // query-language AC-4 — An unknown operator is refused
+    #[Group('spec:query-language:AC-4')]
+    #[Group('spec:query-language')]
+    public function testAnUnknownOperatorIsRefused(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage("query: unsupported operator 'cs'");
+        Query::toParams(['where' => ['tags' => ['op' => 'cs', 'value' => '{a}']]]);
+    }
+
+    // runtime-adapter AC-4 — Another backend plugs in without changing App code
+    #[Group('spec:runtime-adapter:AC-4')]
+    #[Group('spec:runtime-adapter')]
+    public function testAnotherBackendPlugsIntoTheRegistry(): void
+    {
+        $mock = new \Revenexx\AppSdk\Adapter\MockAdapter(['greetings' => [['id' => '1', 'name' => 'Ada']]]);
+        AdapterRegistry::register('parity-null', static fn (array $config): Adapter => $mock);
+
+        $this->assertContains('parity-null', AdapterRegistry::kinds());
+        $this->assertContains('mock', AdapterRegistry::kinds());
+        $this->assertContains('remote', AdapterRegistry::kinds());
+
+        $entity = new Entity('greetings', 'g', 'id', [], ['list']);
+        $db = new Client(AdapterRegistry::create('parity-null'), [$entity->name => $entity]);
+        $this->assertSame('Ada', $db->list($entity)[0]['name']);
+    }
+
+    // runtime-adapter AC-3 — The remote adapter sends what it was configured with
+    #[Group('spec:runtime-adapter:AC-3')]
+    #[Group('spec:runtime-adapter')]
     public function testRemoteAdapterBuildsRequestsAgainstInjectedTransport(): void
     {
         $calls = [];
