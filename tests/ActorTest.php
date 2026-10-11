@@ -8,7 +8,7 @@ use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 use Revenexx\AppSdk\Router\Actor;
 
-/** Who is acting — mirrors packages/sdk/test/actor.test.ts. */
+/** Who is acting — the same cases the JavaScript SDK tests. */
 final class ActorTest extends TestCase
 {
     /** @param array<string, string> $headers */

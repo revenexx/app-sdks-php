@@ -6,12 +6,12 @@ namespace Revenexx\AppSdk\Router;
 
 /**
  * Who is acting behind a call, and how far each part of that was established —
- * the mirror of packages/sdk/src/router/actor.ts.
+ * the counterpart of `c.actor` in the JavaScript SDK.
  *
  * `trust` is the load-bearing field: a storefront server naming a contact and a
- * person proving themselves arrive in the same headers. The gateway does not
- * produce the authenticated plane today (RAD-12 withdrawn), so
- * `authenticated()` answers false for every caller — the honest answer.
+ * person proving themselves arrive in the same headers. Today the platform
+ * verifies no person itself, so `authenticated()` answers false for every
+ * caller — the honest answer.
  */
 final class Actor
 {

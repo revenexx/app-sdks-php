@@ -14,7 +14,7 @@ use Revenexx\AppSdk\Router\App;
 use Revenexx\AppSdk\Router\Crud;
 use Revenexx\AppSdk\Tests\Support\FakeContext;
 
-/** `Crud::mount` — mirrors the mountCrud half of packages/sdk/test/router.test.ts. */
+/** `Crud::mount` — the same cases the JavaScript SDK tests for `mountCrud`. */
 final class CrudTest extends TestCase
 {
     /** @param list<string> $ops */

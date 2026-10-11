@@ -1,39 +1,39 @@
-# revenexx/app-sdk (PHP)
+# Changelog
 
-The PHP package's own version line. It is released by tagging `php-vX.Y.Z` in
-revenexx/app-sdks; the split workflow publishes it as `vX.Y.Z` in
-revenexx/app-sdks-php, which Packagist reads. The JavaScript package
-(`@revenexx/app-sdk`) is versioned separately. The two are held to one contract
-by the parity fixture, not by a shared version number.
+All notable changes to `revenexx/app-sdk` are listed here. The package follows
+[semantic versioning](https://semver.org).
 
 ## 1.1.0
 
-- **Readable refusals:** every refusal body also carries `message` (= `error`) and
-  `type` (= `code`), the names the platform client reads. Its exception now carries
-  the App's reason and code instead of an empty message (RAD-98).
-- **`Refusal::of($e)`** reads a refusal into status, code, message, details and the
-  answering App. It handles this App's own `HttpError` and another App's refusal
-  caught from the platform client alike. For a crash it returns null.
-- **An uncaught refusal from another App is logged as what the far side said.**
+- **Refusals are readable through the revenexx platform client.** Every refusal body
+  now also carries `message` (the same as `error`) and `type` (the same as `code`).
+  These are the names the platform client reads, so a caught refusal carries the
+  App's reason and code instead of an empty message.
+- **`Refusal::of($e)`** reads a refusal into `status`, `code`, `message`, `details`
+  and the App that answered. It works for your own `HttpError` and for another App's
+  refusal caught from the platform client, and answers `null` for a crash.
+- **An uncaught refusal from another App** is logged with what the other App said.
   The caller still gets `500 internal_error`.
 
 ## 1.0.0
 
-The first release. The surface is bound under semver from here, under the same
-policy as the JavaScript package: a narrowing or a removed name is a major.
+The first release. From here, the public classes and methods, the answers of the
+routes the SDK mounts, and the status and `code` of every refusal are bound by
+semantic versioning.
 
 - **Data client:** `Client` with `list`, `page`, `get`, `create`, `update`,
-  `updateIf` and `remove`. Operations the manifest does not grant are refused.
-- **Adapters:** `mock`, `remote` and `runtime`. `runtime` is configured from the
-  function's own request (ADR-0057).
-- **Errors:** `HttpError` with stable codes. PostgREST refusals are mapped by
-  `PostgrestError`, and no table or constraint name reaches a caller.
-- **Router:** `Router\App` and `Router\RouteContext`. Answers go out as JSON through
-  `send()`, so the runtime's `JSON_FORCE_OBJECT` never turns a list into an object.
-- **One-line CRUD:** `Router\Crud::mount`. A filter that cannot be applied is
+  `updateIf` and `remove`. An operation the manifest does not grant is refused with
+  `403 not_permitted`.
+- **Adapters:** `mock` for tests, `remote` for a development tenant, and `runtime`,
+  which is configured from the request the function serves.
+- **Errors:** `HttpError` with stable codes. Refusals from the data plane are mapped
+  to a status and a code, and no table or constraint name reaches a caller.
+- **Router:** `Router\App` and `Router\RouteContext`. Answers are written as real
+  JSON lists and objects.
+- **One-line CRUD:** `Router\Crud::mount`. A list filter that cannot be applied is
   refused, never ignored.
-- **Acting person:** `Router\Actor`.
-- **Settings:** `Settings`, which is market-aware, cached and fails open.
-- **Events:** the App's own events — `events()->emit()`, recorded by the mock.
-
-Not offered: tracing.
+- **Who is acting:** `Router\Actor`.
+- **Settings:** `Settings`, resolved per market, cached, and falling back to your
+  defaults when the platform cannot be reached.
+- **The App's own events:** `events()->emit()`, recorded instead of published on the
+  `mock` adapter.

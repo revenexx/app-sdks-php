@@ -7,7 +7,7 @@ namespace Revenexx\AppSdk;
 /**
  * One event the App may fire itself — a `manifest.events.emits[]` entry
  * declared `trigger: "app"`. Generated into the App's client beside the entity
- * descriptors. Mirrors `EventDescriptor` in the TS runtime.
+ * descriptors. Mirrors `EventDescriptor` in the JavaScript SDK.
  */
 final class EventDescriptor
 {

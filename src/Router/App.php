@@ -9,7 +9,7 @@ use Revenexx\AppSdk\Settings;
 
 /**
  * Declarative routing for a revenexx App function on the open-runtimes PHP
- * runtime — the mirror of `createApp` in packages/sdk/src/router/router.ts.
+ * runtime — the counterpart of `createApp` in the JavaScript SDK.
  *
  *   $app = new App(['name' => 'markets', 'settings' => ['defaults' => [...]]]);
  *   $app->get('/markets/{id}', fn (RouteContext $c) => $c->json(...));

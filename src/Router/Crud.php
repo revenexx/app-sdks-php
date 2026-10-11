@@ -10,8 +10,8 @@ use Revenexx\AppSdk\Entity;
 use Revenexx\AppSdk\HttpError;
 
 /**
- * The five REST routes for one entity, in one call — the mirror of `mountCrud`
- * in packages/sdk/src/router/crud.ts, with the same list rules:
+ * The five REST routes for one entity, in one call — the counterpart of
+ * `mountCrud` in the JavaScript SDK, with the same list rules:
  *
  *   Crud::mount($app, $client, $client->entity('locales'), [
  *       'path' => '/markets/{marketId}/locales',

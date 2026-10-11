@@ -17,8 +17,8 @@ use Revenexx\AppSdk\Router\Crud;
 use Revenexx\AppSdk\Tests\Support\FakeContext;
 
 /**
- * The remote and runtime adapters against recorded PostgREST answers — mirrors
- * packages/sdk/test/postgrest-errors.test.ts and runtime.test.ts.
+ * The remote and runtime adapters against recorded PostgREST answers — the same
+ * cases the JavaScript SDK tests.
  */
 final class DataPlaneTest extends TestCase
 {

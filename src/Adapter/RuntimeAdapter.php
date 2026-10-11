@@ -6,7 +6,7 @@ namespace Revenexx\AppSdk\Adapter;
 
 /**
  * Production adapter: a {@see RemoteAdapter} configured from the function's own
- * request (ADR-0057) — the mirror of packages/sdk/src/adapters/runtime.ts.
+ * request, like the JavaScript SDK's `runtime` adapter.
  *
  * Token = the brokered identity forwarded as `x-revenexx-context`; tenant =
  * `x-revenexx-tenant`; market = `x-revenexx-market`; endpoint =

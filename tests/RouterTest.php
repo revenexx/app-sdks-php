@@ -14,7 +14,7 @@ use Revenexx\AppSdk\Router\App;
 use Revenexx\AppSdk\Router\RouteContext;
 use Revenexx\AppSdk\Tests\Support\FakeContext;
 
-/** The PHP router — mirrors packages/sdk/test/router.test.ts. */
+/** The PHP router — the same cases the JavaScript SDK tests. */
 final class RouterTest extends TestCase
 {
     // router AC-1 — A route matches by method and path, extracting its parameters

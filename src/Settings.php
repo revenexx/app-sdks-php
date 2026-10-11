@@ -5,8 +5,7 @@ declare(strict_types=1);
 namespace Revenexx\AppSdk;
 
 /**
- * App settings — the tenant's configuration for THIS app, read at runtime. The
- * mirror of packages/sdk/src/settings.ts.
+ * App settings — the tenant's configuration for THIS app, read at runtime.
  *
  *   GET {gateway}/v1/settings/apps/{app}[?market={code}]
  *     -> { app, market, settings: { … }, masked: [ … ] }
@@ -18,7 +17,7 @@ namespace Revenexx\AppSdk;
  * app, market) — build it once, at module scope, so the cache outlives a
  * request: open-runtimes loads the entrypoint once per process.
  *
- * Unlike the TS reader there is no in-flight sharing: a PHP worker serves one
+ * There is no in-flight sharing between concurrent reads: a PHP worker serves one
  * request at a time.
  */
 final class Settings

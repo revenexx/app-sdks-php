@@ -12,7 +12,7 @@ use Revenexx\AppSdk\Settings;
 use Revenexx\AppSdk\Tests\Support\FakeContext;
 
 /**
- * The settings reader — mirrors packages/sdk/test/settings.test.ts. The fake
+ * The settings reader — the same cases the JavaScript SDK tests. The fake
  * gateway applies the gateway's own precedence (market override → tenant value
  * → schema default) so the tests assert that the reader asks for the right
  * thing and returns the answer unmangled.

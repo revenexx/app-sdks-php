@@ -25,7 +25,7 @@ final class Query
     {
         // Every key and value is percent-encoded, so a value carrying `&`, `=`,
         // a space or a non-ASCII character stays one value — the same answer
-        // the TS runtime's URLSearchParams gives. PostgREST decodes it.
+        // the JavaScript SDK's URLSearchParams gives. PostgREST decodes it.
         $pairs = [];
         foreach (($query['where'] ?? []) as $col => $cond) {
             $pairs[] = rawurlencode((string) $col) . '=' . rawurlencode(self::encodeCondition($cond));
@@ -66,7 +66,7 @@ final class Query
         }
 
         // `eq.null` compares against the string 'null'; a null value means
-        // "is null", which is what the mock already matched. Same as TS.
+        // "is null", which is what the mock already matched. Same as the JavaScript SDK.
         if ($cond === null) {
             return 'is.null';
         }
@@ -80,7 +80,7 @@ final class Query
             return $v ? 'true' : 'false';
         }
         // `['op' => 'is', 'value' => null]` is PostgREST's `is.null`; an empty
-        // string here sent `is.`, which PostgREST refuses. Same as the TS runtime.
+        // string here sent `is.`, which PostgREST refuses. Same as the JavaScript SDK.
         if ($v === null) {
             return 'null';
         }

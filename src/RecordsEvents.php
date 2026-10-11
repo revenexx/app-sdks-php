@@ -7,7 +7,7 @@ namespace Revenexx\AppSdk;
 /**
  * An adapter that records emits instead of publishing them, so a test can
  * assert what an App fired without any infrastructure. Only the mock adapter
- * does this; the TS runtime's optional `emitted()` is the same idea.
+ * does this; the JavaScript SDK's optional `emitted()` is the same idea.
  */
 interface RecordsEvents
 {

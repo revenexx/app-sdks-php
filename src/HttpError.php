@@ -6,7 +6,7 @@ namespace Revenexx\AppSdk;
 
 /**
  * The one error representation every layer of the PHP SDK agrees on — the
- * mirror of the TS runtime's `HttpError` (packages/sdk/src/errors.ts).
+ * counterpart of `HttpError` in the JavaScript SDK.
  *
  * - `getMessage()`, `$errorCode` and `$details` are the client-facing payload:
  *   always safe, never derived from a database error body.
@@ -63,7 +63,7 @@ class HttpError extends \RuntimeException
      * The body every refusal is answered with: `error` is the message; `message`
      * and `type` repeat the message and the code under the names the platform
      * client reads, so its exception carries the App's reason and code instead of
-     * nothing (RAD-98). Same shape as the TS runtime.
+     * nothing. Same shape as the JavaScript SDK.
      *
      * @return array<string, mixed>
      */

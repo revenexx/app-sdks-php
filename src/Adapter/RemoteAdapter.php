@@ -16,7 +16,7 @@ use Revenexx\AppSdk\UpdatesConditionally;
 
 /**
  * PostgREST-over-HTTP adapter (production data plane / dev tenant). The token is
- * the brokered per-tenant identity (ADR-0057), presented to PostgREST as a
+ * the brokered per-tenant identity, presented to PostgREST as a
  * Bearer JWT; the tenant header rides alongside. The HTTP transport is
  * injectable so it can be unit-tested without a live PostgREST.
  *
@@ -151,7 +151,7 @@ final class RemoteAdapter implements Adapter, CountsRows, EmitsEvents, UpdatesCo
     }
 
     /**
-     * Fire one of the App's own declared events through the routine Baseline
+     * Fire one of the App's own declared events through the routine the platform
      * generated for it: `POST /rpc/{vendor}__{app}__emit`.
      *
      * Nothing about WHICH app is emitting travels in this request. The routine
@@ -237,7 +237,7 @@ final class RemoteAdapter implements Adapter, CountsRows, EmitsEvents, UpdatesCo
         if ($this->tenant !== null && $this->tenant !== '') {
             $headers[] = 'X-Revenexx-Tenant: ' . $this->tenant;
         }
-        // The active market, forwarded to the data layer like the TS runtime does.
+        // The active market, forwarded to the data layer like the JavaScript SDK does.
         if ($this->market !== null && $this->market !== '') {
             $headers[] = 'X-Revenexx-Market: ' . $this->market;
         }

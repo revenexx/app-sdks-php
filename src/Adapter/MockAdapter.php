@@ -120,7 +120,7 @@ final class MockAdapter implements Adapter, CountsRows, EmitsEvents, RecordsEven
      * A `where` on a column the entity does not have. PostgREST answers that
      * with 400 (SQLSTATE 42703), which the remote adapter maps to `400
      * bad_request`; the mock used to filter every row out and return [],
-     * so a test passed against a call that fails in production. Mirrors the TS
+     * so a test passed against a call that fails in production. Mirrors the JavaScript SDK's
      * mock. `tenant_id` exists on every table without being declared; an
      * entity without column metadata is not checked.
      *

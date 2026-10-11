@@ -20,7 +20,7 @@ final class Client
     /**
      * @param array<string, Entity>          $entities
      * @param array<string, EventDescriptor> $declaredEvents the App's own `trigger: "app"` events
-     * @param ?string                        $emitFn         the routine Baseline generated for them
+     * @param ?string                        $emitFn         the routine the platform generated for them
      */
     public function __construct(
         private readonly Adapter $adapter,
@@ -107,8 +107,8 @@ final class Client
     /**
      * A patch with no fields is rejected before it reaches the adapter — it is
      * a malformed request, not a write. PostgREST answers a column-less PATCH
-     * with `200 []`, so the adapter would have no row to return; the TS runtime
-     * has the same rule (packages/sdk/src/patch.ts).
+     * with `200 []`, so the adapter would have no row to return; the JavaScript
+     * SDK has the same rule.
      *
      * @param array<string, mixed> $patch
      * @return array<string, mixed>
@@ -131,8 +131,8 @@ final class Client
      *
      * An empty `$where` is refused: it is an unconditional update spelled as a
      * conditional one, and would let through the race the caller meant to
-     * close. `update()` is the unconditional write. Same rule as the TS runtime
-     * (packages/sdk/src/patch.ts).
+     * close. `update()` is the unconditional write. Same rule as the
+     * JavaScript SDK.
      *
      * @param array<string, mixed> $where
      * @param array<string, mixed> $patch

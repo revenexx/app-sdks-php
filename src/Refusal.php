@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Revenexx\AppSdk;
 
 /**
- * A refusal, whichever side raised it — the mirror of `refusalOf` in
- * packages/sdk/src/errors.ts.
+ * A refusal, whichever side raised it — the counterpart of `refusalOf` in the
+ * JavaScript SDK.
  *
  * Reads this App's own {@see HttpError}, or the exception the platform client
  * throws when another App refused a call: its integer code is the HTTP status

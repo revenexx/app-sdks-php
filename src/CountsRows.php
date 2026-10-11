@@ -8,7 +8,7 @@ namespace Revenexx\AppSdk;
  * An adapter that can report how many rows match beside the page it returns.
  *
  * Separate from {@see Adapter} for the reason {@see UpdatesConditionally} is:
- * PHP interfaces have no optional members, and the TS runtime makes `page`
+ * PHP interfaces have no optional members, and the JavaScript SDK makes `page`
  * optional on `Adapter`.
  */
 interface CountsRows

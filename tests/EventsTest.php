@@ -14,7 +14,7 @@ use Revenexx\AppSdk\EventDescriptor;
 use Revenexx\AppSdk\HttpError;
 
 /**
- * `$client->events()->emit()` — the PHP mirror of the TS runtime's
+ * `$client->events()->emit()` — the PHP counterpart of the JavaScript SDK's
  * `db.events.emit()`. Same check, same wire format, same wording, because the
  * two runtimes are one contract with two proof points: an emitter that lies
  * about either side is worse than no emitter.

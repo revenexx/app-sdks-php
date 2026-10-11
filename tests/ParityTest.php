@@ -22,16 +22,45 @@ use Revenexx\AppSdk\Router\RouteContext;
 use Revenexx\AppSdk\Tests\Support\FakeContext;
 
 /**
- * JS ↔ PHP parity. Both runtimes answer the cases in fixtures/parity.json; the
- * TS half is packages/sdk/test/parity.test.ts. A case belongs in the fixture,
+ * JS ↔ PHP parity. The PHP and the JavaScript SDK answer the same shared cases
+ * (a JSON fixture kept beside the JavaScript SDK). A case belongs in the fixture,
  * not in one runtime's test.
  */
 final class ParityTest extends TestCase
 {
-    /** @return array<string, mixed> */
+    private const FIXTURE = __DIR__ . '/../../../fixtures/parity.json';
+
+    /**
+     * The shared cases. They live beside the JavaScript SDK, so a checkout of this
+     * package alone has none, and these tests skip rather than fail.
+     *
+     * @return array<string, mixed>
+     */
     private static function fixture(): array
     {
-        return json_decode((string) file_get_contents(__DIR__ . '/../../../fixtures/parity.json'), true, flags: JSON_THROW_ON_ERROR);
+        if (! is_file(self::FIXTURE)) {
+            return [];
+        }
+
+        return json_decode((string) file_get_contents(self::FIXTURE), true, flags: JSON_THROW_ON_ERROR);
+    }
+
+    private static function requireFixture(): void
+    {
+        if (! is_file(self::FIXTURE)) {
+            self::markTestSkipped('the shared parity cases are not part of this package');
+        }
+    }
+
+    /**
+     * One placeholder data set when the fixture is absent, so a data provider is
+     * never empty (PHPUnit refuses that) and the test can skip.
+     *
+     * @return iterable<string, list<mixed>>
+     */
+    private static function absent(int $arity): iterable
+    {
+        yield 'parity cases not available' => array_fill(0, $arity, []);
     }
 
     /** @param list<string> $ops */
@@ -49,6 +78,11 @@ final class ParityTest extends TestCase
     /** @return iterable<string, array{array<string, mixed>, list<array{string, string}>}> */
     public static function queries(): iterable
     {
+        if (self::fixture() === []) {
+            yield from self::absent(2);
+
+            return;
+        }
         foreach (self::fixture()['queries'] as $case) {
             yield $case['name'] => [$case['query'], $case['params']];
         }
@@ -57,6 +91,11 @@ final class ParityTest extends TestCase
     /** @return iterable<string, array{array<string, mixed>, list<string>}> */
     public static function matchCases(): iterable
     {
+        if (self::fixture() === []) {
+            yield from self::absent(2);
+
+            return;
+        }
         foreach (self::fixture()['matches'] as $case) {
             yield $case['name'] => [$case['where'], $case['ids']];
         }
@@ -72,6 +111,7 @@ final class ParityTest extends TestCase
     #[DataProvider('queries')]
     public function testSerialisesToTheFixturesParameters(array $query, array $params): void
     {
+        self::requireFixture();
         $pairs = array_map(
             static fn (string $pair): array => array_map('rawurldecode', explode('=', $pair, 2)),
             explode('&', Query::toParams($query)),
@@ -90,6 +130,7 @@ final class ParityTest extends TestCase
     #[DataProvider('matchCases')]
     public function testTheMockMatchesTheFixturesRows(array $where, array $ids): void
     {
+        self::requireFixture();
         $e = self::things();
         $db = new Client(AdapterRegistry::create('mock', ['seed' => ['things' => self::fixture()['rows']]]), [$e->name => $e]);
 
@@ -101,6 +142,7 @@ final class ParityTest extends TestCase
     #[Group('spec:runtime-parity')]
     public function testRefusalsUseTheFixturesWording(): void
     {
+        self::requireFixture();
         $messages = self::fixture()['messages'];
         $e = self::things(['list', 'get', 'update']);
         $db = new Client(AdapterRegistry::create('mock', ['seed' => ['things' => self::fixture()['rows']]]), [$e->name => $e]);
@@ -122,6 +164,11 @@ final class ParityTest extends TestCase
     /** @return iterable<string, array{array<string, mixed>}> */
     public static function errorCases(): iterable
     {
+        if (self::fixture() === []) {
+            yield from self::absent(1);
+
+            return;
+        }
         foreach (self::fixture()['errors'] as $case) {
             yield $case['name'] => [$case];
         }
@@ -134,6 +181,7 @@ final class ParityTest extends TestCase
     #[DataProvider('errorCases')]
     public function testMapsADataPlaneRefusalToTheFixturesAnswer(array $case): void
     {
+        self::requireFixture();
         $e = self::things(['list', 'get', 'create', 'delete']);
         $adapter = new RemoteAdapter('http://pgrst:3000', transport: static fn (): array => ['status' => $case['status'], 'body' => $case['body']]);
         $db = new Client($adapter, [$e->name => $e]);
@@ -155,6 +203,11 @@ final class ParityTest extends TestCase
     /** @return iterable<string, array{array<string, mixed>}> */
     public static function listFilterCases(): iterable
     {
+        if (self::fixture() === []) {
+            yield from self::absent(1);
+
+            return;
+        }
         foreach (self::fixture()['listFilters']['cases'] as $case) {
             yield $case['name'] => [$case];
         }
@@ -167,6 +220,7 @@ final class ParityTest extends TestCase
     #[DataProvider('listFilterCases')]
     public function testTheMountedListAnswersTheFixturesQuerystring(array $case): void
     {
+        self::requireFixture();
         $lf = self::fixture()['listFilters'];
         $e = new Entity('markets', 't_markets', 'id', $lf['columns'], ['list', 'get', 'create', 'update', 'delete']);
         $db = new Client(AdapterRegistry::create('mock', ['seed' => ['markets' => $lf['rows']]]), [$e->name => $e]);
@@ -184,7 +238,7 @@ final class ParityTest extends TestCase
         }
         if (isset($case['filter'])) {
             self::assertSame($case['filter'], $res['data']['filter']);
-            // An empty filter is an object on the wire, as in TS — never a list.
+            // An empty filter is an object on the wire, as in JavaScript — never a list.
             self::assertStringContainsString('"filter":{', $res['raw']);
         }
         if (isset($case['unknown'])) {
@@ -201,6 +255,11 @@ final class ParityTest extends TestCase
     /** @return iterable<string, array{array<string, string>, array<string, mixed>}> */
     public static function actorCases(): iterable
     {
+        if (self::fixture() === []) {
+            yield from self::absent(2);
+
+            return;
+        }
         foreach (self::fixture()['actor'] as $case) {
             yield $case['name'] => [$case['headers'], $case['expect']];
         }
@@ -216,6 +275,7 @@ final class ParityTest extends TestCase
     #[DataProvider('actorCases')]
     public function testReadsTheFixturesActingPerson(array $headers, array $expect): void
     {
+        self::requireFixture();
         $a = Actor::fromHeaders(static fn (string $n): ?string => $headers[$n] ?? null);
 
         self::assertSame($expect, [
@@ -233,6 +293,11 @@ final class ParityTest extends TestCase
     /** @return iterable<string, array{array<string, mixed>}> */
     public static function routingCases(): iterable
     {
+        if (self::fixture() === []) {
+            yield from self::absent(1);
+
+            return;
+        }
         foreach (self::fixture()['routing'] as $case) {
             yield $case['name'] => [$case];
         }
@@ -245,6 +310,7 @@ final class ParityTest extends TestCase
     #[DataProvider('routingCases')]
     public function testTheRouterAnswersTheFixturesRefusals(array $case): void
     {
+        self::requireFixture();
         $app = new App(['name' => 'parity']);
         $app->get('/things', static fn (RouteContext $c) => $c->json([]));
         $app->get('/boom', static fn () => throw new \RuntimeException('kaput — internals'));
@@ -257,13 +323,18 @@ final class ParityTest extends TestCase
         if (isset($case['error'])) {
             self::assertSame($case['error'], $res['data']['error']);
         }
-        // The names the platform client reads (RAD-98).
+        // The names the platform client reads.
         self::assertSame([$res['data']['error'], $res['data']['code']], [$res['data']['message'], $res['data']['type']]);
     }
 
     /** @return iterable<string, array{array<string, mixed>, ?array<string, mixed>}> */
     public static function refusalCases(): iterable
     {
+        if (self::fixture() === []) {
+            yield from self::absent(2);
+
+            return;
+        }
         foreach (self::fixture()['refusals'] as $case) {
             yield $case['name'] => [$case['thrown'], $case['expect']];
         }
@@ -279,6 +350,7 @@ final class ParityTest extends TestCase
     #[DataProvider('refusalCases')]
     public function testReadsTheFixturesRefusal(array $thrown, ?array $expect): void
     {
+        self::requireFixture();
         $r = Refusal::of(PlatformException::thrownFrom($thrown));
 
         self::assertSame($expect, $r === null ? null : [

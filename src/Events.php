@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Revenexx\AppSdk;
 
 /**
- * Fire one of the App's own declared events. The PHP mirror of the TS runtime's
+ * Fire one of the App's own declared events. The PHP counterpart of the JavaScript SDK's
  * `db.events` — same check, same wording, same answer.
  *
  * The name check happens here, before the round trip, because this is where the

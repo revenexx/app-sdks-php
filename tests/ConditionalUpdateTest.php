@@ -14,8 +14,8 @@ use Revenexx\AppSdk\Entity;
 use Revenexx\AppSdk\HttpError;
 
 /**
- * `updateIf($entity, $id, $where, $patch)` — compare-and-set, mirroring the TS
- * runtime (packages/sdk/test/conditional-update.test.ts).
+ * `updateIf($entity, $id, $where, $patch)` — compare-and-set, the same cases the
+ * JavaScript SDK tests.
  */
 final class ConditionalUpdateTest extends TestCase
 {

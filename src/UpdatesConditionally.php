@@ -9,7 +9,7 @@ namespace Revenexx\AppSdk;
  * one atomic write (compare-and-set).
  *
  * Separate from {@see Adapter} for the reason {@see EmitsEvents} is: PHP
- * interfaces have no optional members, and the TS runtime makes `updateIf`
+ * interfaces have no optional members, and the JavaScript SDK makes `updateIf`
  * optional on `Adapter`. The client cannot emulate it as a read followed by an
  * update — that is the race it exists to close — so an adapter without it
  * makes {@see Client::updateIf()} fail rather than degrade.

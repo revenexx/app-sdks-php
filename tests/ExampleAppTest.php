@@ -12,7 +12,7 @@ use Revenexx\AppSdk\Tests\Support\FakeContext;
 use Revenexx\SampleApp\Db;
 
 /**
- * The reference App (examples/sample-app/php) assembled the way main.php does
+ * The reference App assembled the way its main.php does
  * it, on the mock adapter: generated client, router, CRUD and settings
  * together. A smoke test of the whole PHP surface, not a promise of its own.
  */
@@ -22,8 +22,8 @@ final class ExampleAppTest extends TestCase
     {
         $example = __DIR__ . '/../../../examples/sample-app/php';
         if (! is_dir($example)) {
-            // The split repo (revenexx/app-sdks-php) carries php/sdk alone.
-            self::markTestSkipped('the reference App lives in the revenexx/app-sdks monorepo');
+            // The reference App is kept beside the JavaScript SDK, not in this package.
+            self::markTestSkipped('the reference App is not part of this package');
         }
         $build = require $example . '/app.php';
         $client = new Client(AdapterRegistry::create('mock', ['seed' => ['greetings' => []]]), Db::entities());

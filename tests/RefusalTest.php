@@ -12,7 +12,7 @@ use Revenexx\AppSdk\Router\App;
 use Revenexx\AppSdk\Tests\Support\FakeContext;
 use Revenexx\AppSdk\Tests\Support\PlatformException;
 
-/** Reading a refusal (RAD-98) — mirrors packages/sdk/test/refusals.test.ts. */
+/** Reading a refusal — the same cases the JavaScript SDK tests. */
 final class RefusalTest extends TestCase
 {
     // cross-app-refusals AC-1 — An App's refusal reaches the platform client with its reason and code

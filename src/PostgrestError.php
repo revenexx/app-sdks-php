@@ -6,8 +6,7 @@ namespace Revenexx\AppSdk;
 
 /**
  * Map a non-2xx PostgREST response to an {@see HttpError} whose message is safe
- * to return — the mirror of packages/sdk/src/adapters/postgrest-error.ts. A
- * duplicate is a 409, a missing parent a 400, a malformed value a 400; nothing
+ * to return, exactly as the JavaScript SDK does. A duplicate is a 409, a missing parent a 400, a malformed value a 400; nothing
  * the caller sees names a table, column or constraint. The raw body travels on
  * `serverDetail` for the logs only.
  */

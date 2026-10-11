@@ -8,7 +8,7 @@ use Revenexx\AppSdk\Settings;
 
 /**
  * What a handler gets: the request, parsed, and the answer it can give — the
- * mirror of the TS runtime's `RouteContext`.
+ * PHP counterpart of the JavaScript SDK's `RouteContext`.
  */
 final class RouteContext
 {
