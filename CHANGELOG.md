@@ -3,6 +3,19 @@
 All notable changes to `revenexx/app-sdk` are listed here. The package follows
 [semantic versioning](https://semver.org).
 
+## 1.1.1
+
+Documentation only; no change in behaviour.
+
+- **README rewritten for App developers.** It covers installation, generating the
+  typed client with the revenexx CLI, a function entrypoint, the data client and
+  queries, adapters, the router and one-line CRUD, errors and their codes, settings,
+  the acting person, events, testing on the mock and versioning.
+- **The compare-and-set retry loop** for an atomic decrement with `updateIf`.
+- **Docblocks** refer to the JavaScript SDK by name.
+- **`composer test` passes in a checkout of this package alone.** The tests that need
+  the cases shared with the JavaScript SDK are skipped there.
+
 ## 1.1.0
 
 - **Refusals are readable through the revenexx platform client.** Every refusal body
