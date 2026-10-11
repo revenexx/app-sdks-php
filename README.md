@@ -112,6 +112,34 @@ $client->remove($markets, $id);
 $client->updateIf($orders, $id, ['status' => 'placing'], ['status' => 'placed']);
 ```
 
+A guard on a number gives an atomic decrement. Read, compute, write only if nobody
+wrote in between, and retry when the answer is `null`:
+
+```php
+function reserve(Client $client, Entity $budgets, string $id, int $amount): array
+{
+    for ($attempt = 0; $attempt < 5; $attempt++) {
+        $budget = $client->get($budgets, $id) ?? throw HttpError::notFound('no such budget');
+        if ($budget['available'] < $amount) {
+            throw HttpError::conflict('not enough budget left');
+        }
+        $next = $client->updateIf(
+            $budgets,
+            $id,
+            ['available' => $budget['available']],              // the value the decision was based on
+            ['available' => $budget['available'] - $amount],
+        );
+        if ($next !== null) {
+            return $next;                                       // our write won
+        }
+    }
+    throw HttpError::conflict('the budget kept changing — try again');
+}
+```
+
+Two concurrent reservations cannot both spend the same amount. The second one's
+condition no longer holds, so it gets `null`, reads again and decides again.
+
 Only the operations the manifest grants are available. Any other call fails with a
 `403` and the code `not_permitted`, naming the method.
 
