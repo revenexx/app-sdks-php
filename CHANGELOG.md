@@ -3,6 +3,23 @@
 All notable changes to `revenexx/app-sdk` are listed here. The package follows
 [semantic versioning](https://semver.org).
 
+## 1.2.0
+
+- **`Trash::mount` gives an entity with `trash: true` its trash in one call**, the same
+  as `mountTrash` in the JavaScript SDK (PE-1022). `DELETE <path>/{id}` puts a live row
+  into the trash with its live children as one group and deletes a trashed row for
+  good; `POST <path>/{id}/restore` brings the group back. `guard` refuses the trash
+  (`409 trash_blocked`), `blockers` refuse the final delete (`409 delete_blocked`),
+  `canDeleteForGood` can require its own permission (`403 not_permitted`). A check that
+  throws blocks.
+- **`$trash->purge($caller)`** is the scheduled job. It reads `trash_retention_days`
+  through the gateway (`GET /v1/audit/settings`, 90 when unset;
+  `REVENEXX_AUDIT_SETTINGS_URL` overrides the URL), deletes for good what is older
+  through the same blockers, and writes the reason a row stays into
+  `purge_blocked_reason`. When the retention cannot be read the run is skipped.
+- **`GatewayCounter`** counts another App's records through the gateway for a cross-app
+  blocker. A count it cannot get is an `unverifiable` blocker.
+
 ## 1.1.1
 
 Documentation only; no change in behaviour.

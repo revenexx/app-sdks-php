@@ -238,6 +238,40 @@ a `400`, never silently ignored:
 | a value carrying an operator, e.g. `?sku=in.(a,b)` | `unsupported_filter_operator` |
 | a filter on a JSON column that is not a whole JSON document | `invalid_value` |
 
+### The trash in one call
+
+An entity with `trash: true` in `schema.json` gets the routes a trash needs from
+`Trash::mount`, the same as `mountTrash` in the JavaScript SDK:
+
+```php
+$refs = new GatewayCounter();
+$trash = Trash::mount($app, $client, $client->entity('organizations'), [
+    'path' => '/organizations',
+    'children' => [['name' => 'contacts', 'entity' => $client->entity('contacts'), 'column' => 'organization_id']],
+    'guard' => fn (array $org) => $org['is_default'] ? ['reason' => 'the default organization stays'] : null,
+    'blockers' => fn (array $org, mixed $c) => [
+        $refs->blocker($c, ['path' => '/v1/orders/open_orders', 'where' => ['organization_id' => $org['id']], 'reason' => 'open orders']),
+    ],
+]);
+```
+
+- `DELETE /organizations/{id}` on a live row puts it into the trash with its live
+  children, as one group (`trash_batch`), recording `deleted_by` / `deleted_by_id`
+  from the acting person. `guard` reasons refuse it (`409 trash_blocked`).
+- The same `DELETE` on a trashed row deletes it for good: the group's children
+  first, then the row. `blockers` reasons refuse it (`409 delete_blocked`);
+  `canDeleteForGood` can require its own permission (`403 not_permitted`).
+- `POST /organizations/{id}/restore` brings back the row and the children of its
+  group (`409 parent_in_trash` when its `parent` is in the trash).
+- `$trash->purge($caller)` is the scheduled job. It reads `trash_retention_days`
+  through the gateway (`GET /v1/audit/settings`, 90 when unset;
+  `REVENEXX_AUDIT_SETTINGS_URL` overrides the URL) and deletes for good what is
+  older, through the same `blockers`. A blocked row stays, with its reason in the
+  result and in `purge_blocked_reason` (`'purgeReasonColumn' => false` for none).
+  If the retention cannot be read, the run is skipped.
+
+A check that throws, and a cross-app count the gateway does not answer, block.
+
 ## Errors
 
 Throw an `HttpError` to refuse a request. The router answers it with its status, and
