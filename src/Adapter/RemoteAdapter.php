@@ -41,6 +41,7 @@ final class RemoteAdapter implements Adapter, CountsRows, EmitsEvents, UpdatesCo
         ?callable $transport = null,
         private readonly ?string $market = null,
         private readonly string $kind = 'remote',
+        private readonly ?string $audit = null,
     ) {
         if ($endpoint === '') {
             throw new \InvalidArgumentException('remote adapter: endpoint is required');
@@ -225,6 +226,17 @@ final class RemoteAdapter implements Adapter, CountsRows, EmitsEvents, UpdatesCo
     }
 
     /**
+     * The audit envelope as it may be forwarded: one line of visible ASCII
+     * (`v1.<kid>.<payload>.<sig>` is base64url and dots), else nothing. Its
+     * content is not read here; Baseline verifies it and ignores what does not
+     * verify, so a missing or bad envelope never fails a call.
+     */
+    public static function auditEnvelope(?string $value): string
+    {
+        return $value !== null && preg_match('/^[\x21-\x7e]{1,4096}$/D', $value) === 1 ? $value : '';
+    }
+
+    /**
      * @param array<string, mixed>|null $body
      * @return array{status: int, body: string, headers: array<string, string>}
      */
@@ -240,6 +252,11 @@ final class RemoteAdapter implements Adapter, CountsRows, EmitsEvents, UpdatesCo
         // The active market, forwarded to the data layer like the JavaScript SDK does.
         if ($this->market !== null && $this->market !== '') {
             $headers[] = 'X-Revenexx-Market: ' . $this->market;
+        }
+        // The request's record-history envelope, passed on unchanged and never read here.
+        $audit = self::auditEnvelope($this->audit);
+        if ($audit !== '') {
+            $headers[] = 'X-Revenexx-Audit: ' . $audit;
         }
         if ($prefer !== null) {
             $headers[] = 'Prefer: ' . $prefer;

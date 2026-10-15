@@ -234,4 +234,67 @@ final class DataPlaneTest extends TestCase
         $this->assertStringStartsWith(RuntimeAdapter::DEFAULT_DATA_ENDPOINT . '/', $urls[0]);
         $this->assertStringStartsWith('https://data.dev.revenexx.test/', $urls[1]);
     }
+
+    // runtime-adapter AC-5 — The record-history envelope travels with every data call
+    #[Group('spec:runtime-adapter:AC-5')]
+    #[Group('spec:runtime-adapter')]
+    public function testTheRecordHistoryEnvelopeTravelsWithEveryDataCall(): void
+    {
+        $envelope = 'v1.k1.eyJ0ZW4iOiJhY21lIn0.c2ln-_x';
+        $headers = [
+            'x-revenexx-context' => 'call-token',
+            'x-revenexx-tenant' => 'acme',
+            'x-revenexx-market' => 'de',
+            'x-revenexx-audit' => $envelope,
+            'x-revenexx-contact' => 'c1',
+            'x-revenexx-actor-trust' => 'asserted',
+        ];
+        $seen = [];
+        $transport = static function (string $m, string $url, array $h) use (&$seen): array {
+            $seen[] = $h;
+
+            return ['status' => 200, 'body' => '[{"id":"r1","code":"web"}]'];
+        };
+        $db = new Client(AdapterRegistry::create('runtime', ['context' => new FakeContext('GET', '/', $headers), 'env' => [], 'transport' => $transport]), ['channels' => self::channels()]);
+        $db->list(self::channels());
+        $db->create(self::channels(), ['code' => 'web']);
+        $db->update(self::channels(), 'r1', ['code' => 'pos']);
+        $db->remove(self::channels(), 'r1');
+
+        $this->assertCount(4, $seen);
+        foreach ($seen as $h) {
+            $this->assertContains('X-Revenexx-Audit: ' . $envelope, $h);
+            $this->assertContains('Authorization: Bearer call-token', $h);
+            $this->assertContains('X-Revenexx-Market: de', $h);
+        }
+
+        // The acting person is read from the same headers exactly as before.
+        $actor = \Revenexx\AppSdk\Router\Actor::fromHeaders(static fn (string $n): string => $headers[strtolower($n)] ?? '');
+        $this->assertSame(['c1', 'asserted', 'contact', null], [$actor->contact, $actor->trust, $actor->plane, $actor->user]);
+    }
+
+    // runtime-adapter AC-5 — The record-history envelope travels with every data call
+    #[Group('spec:runtime-adapter:AC-5')]
+    #[Group('spec:runtime-adapter')]
+    public function testNoAuditHeaderWithoutAUsableEnvelope(): void
+    {
+        $seen = [];
+        $transport = static function (string $m, string $url, array $h) use (&$seen): array {
+            $seen[] = $h;
+
+            return ['status' => 200, 'body' => '[]'];
+        };
+        foreach ([null, '', 'v1.k1.a b.c', "v1.k1.a\r\nX-Evil: 1", 'v1.ü.a.b', str_repeat('x', 4097)] as $audit) {
+            $headers = ['x-revenexx-context' => 't', 'x-revenexx-tenant' => 'acme'];
+            if ($audit !== null) {
+                $headers['x-revenexx-audit'] = $audit;
+            }
+            RuntimeAdapter::create(['context' => new FakeContext('GET', '/', $headers), 'env' => ['REVENEXX_AUDIT' => 'v1.k.p.s'], 'transport' => $transport])->list(self::channels());
+        }
+
+        $this->assertCount(6, $seen);
+        foreach ($seen as $h) {
+            $this->assertEmpty(array_filter($h, static fn (string $line): bool => str_starts_with(strtolower($line), 'x-revenexx-audit')));
+        }
+    }
 }

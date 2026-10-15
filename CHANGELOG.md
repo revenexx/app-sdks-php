@@ -19,6 +19,12 @@ All notable changes to `revenexx/app-sdk` are listed here. The package follows
   `purge_blocked_reason`. When the retention cannot be read the run is skipped.
 - **`GatewayCounter`** counts another App's records through the gateway for a cross-app
   blocker. A count it cannot get is an `unverifiable` blocker.
+- **The `runtime` adapter forwards the request's `X-Revenexx-Audit`** to the data plane
+  unchanged with every request, like `X-Revenexx-Market` (PE-1039). Baseline uses it to
+  name the person behind a call in the record history; the SDK never reads it. Without
+  one, or with a value that is not one line of visible ASCII, no header is sent and
+  nothing else changes. `RemoteAdapter` takes it as the named argument `audit:`.
+  `Actor` is unchanged.
 
 ## 1.1.1
 

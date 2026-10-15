@@ -61,6 +61,7 @@ final class AdapterRegistry
             $c['tenant'] ?? null,
             $c['transport'] ?? null,
             $c['market'] ?? null,
+            audit: $c['audit'] ?? null,
         );
         // In-function (production): configured from the request it serves.
         self::$factories['runtime'] ??= static fn (array $c): Adapter => RuntimeAdapter::create($c);

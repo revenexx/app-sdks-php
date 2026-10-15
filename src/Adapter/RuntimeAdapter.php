@@ -9,7 +9,8 @@ namespace Revenexx\AppSdk\Adapter;
  * request, like the JavaScript SDK's `runtime` adapter.
  *
  * Token = the brokered identity forwarded as `x-revenexx-context`; tenant =
- * `x-revenexx-tenant`; market = `x-revenexx-market`; endpoint =
+ * `x-revenexx-tenant`; market = `x-revenexx-market`; the record-history
+ * envelope `x-revenexx-audit` is passed on unchanged; endpoint =
  * `REVENEXX_DATA_ENDPOINT`, falling back to the platform data plane. A deployed
  * App needs no configuration:
  *
@@ -44,6 +45,9 @@ final class RuntimeAdapter
             transport: $config['transport'] ?? null,
             market: $header('x-revenexx-market') ?: $read('REVENEXX_MARKET'),
             kind: 'runtime',
+            // The record-history envelope of THIS request, passed on unchanged.
+            // Bound to the request's token and short-lived: no env fallback.
+            audit: $header('x-revenexx-audit'),
         );
     }
 
