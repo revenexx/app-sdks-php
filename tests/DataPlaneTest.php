@@ -297,4 +297,92 @@ final class DataPlaneTest extends TestCase
             $this->assertEmpty(array_filter($h, static fn (string $line): bool => str_starts_with(strtolower($line), 'x-revenexx-audit')));
         }
     }
+
+    // runtime-adapter AC-6 — A note on the change travels with every data call
+    #[Group('spec:runtime-adapter:AC-6')]
+    #[Group('spec:runtime-adapter')]
+    public function testTheRecordHistoryNoteTravelsWithEveryDataCall(): void
+    {
+        $note = rawurlencode('{"title":"Zurückgesetzt auf Eintrag 4","reason":"Versehentlich geändert"}');
+        $headers = [
+            'x-revenexx-context' => 'call-token',
+            'x-revenexx-tenant' => 'acme',
+            'x-revenexx-audit' => 'v1.k1.eyJ0ZW4iOiJhY21lIn0.c2ln-_x',
+            'x-revenexx-audit-note' => $note,
+            'x-revenexx-contact' => 'c1',
+            'x-revenexx-actor-trust' => 'asserted',
+        ];
+        $seen = [];
+        $transport = static function (string $m, string $url, array $h) use (&$seen): array {
+            $seen[] = $h;
+
+            return ['status' => 200, 'body' => '[{"id":"r1","code":"web"}]'];
+        };
+        $db = new Client(AdapterRegistry::create('runtime', ['context' => new FakeContext('GET', '/', $headers), 'env' => [], 'transport' => $transport]), ['channels' => self::channels()]);
+        $db->list(self::channels());
+        $db->create(self::channels(), ['code' => 'web']);
+        $db->update(self::channels(), 'r1', ['code' => 'pos']);
+        $db->remove(self::channels(), 'r1');
+
+        $this->assertCount(4, $seen);
+        foreach ($seen as $h) {
+            $this->assertContains('X-Revenexx-Audit-Note: ' . $note, $h);
+            $this->assertContains('X-Revenexx-Audit: ' . $headers['x-revenexx-audit'], $h);
+        }
+
+        // The note names nobody: the acting person reads exactly as before.
+        $actor = \Revenexx\AppSdk\Router\Actor::fromHeaders(static fn (string $n): string => $headers[strtolower($n)] ?? '');
+        $this->assertSame(['c1', 'asserted', 'contact', null], [$actor->contact, $actor->trust, $actor->plane, $actor->user]);
+    }
+
+    // runtime-adapter AC-6 — A note on the change travels with every data call
+    #[Group('spec:runtime-adapter:AC-6')]
+    #[Group('spec:runtime-adapter')]
+    public function testNoNoteHeaderWithoutAUsableNote(): void
+    {
+        $seen = [];
+        $transport = static function (string $m, string $url, array $h) use (&$seen): array {
+            $seen[] = $h;
+
+            return ['status' => 200, 'body' => '[]'];
+        };
+        $bad = [null, '', "a\r\nX-Evil: 1", "tab\there", '{"title":"ü"}', str_repeat('x', 8193)];
+        foreach ($bad as $value) {
+            $headers = ['x-revenexx-context' => 't', 'x-revenexx-tenant' => 'acme'];
+            if ($value !== null) {
+                $headers['x-revenexx-audit-note'] = $value;
+            }
+            RuntimeAdapter::create(['context' => new FakeContext('GET', '/', $headers), 'env' => ['REVENEXX_AUDIT_NOTE' => 'x'], 'transport' => $transport])->list(self::channels());
+        }
+
+        $this->assertCount(\count($bad), $seen);
+        foreach ($seen as $h) {
+            $this->assertEmpty(array_filter($h, static fn (string $line): bool => str_starts_with(strtolower($line), 'x-revenexx-audit-note')));
+        }
+
+        // Exactly at the cap still travels.
+        $atCap = str_repeat('x', 8192);
+        RuntimeAdapter::create(['context' => new FakeContext('GET', '/', ['x-revenexx-audit-note' => $atCap]), 'env' => [], 'transport' => $transport])->list(self::channels());
+        $this->assertContains('X-Revenexx-Audit-Note: ' . $atCap, end($seen));
+    }
+
+    // runtime-adapter AC-6 — A note on the change travels with every data call
+    #[Group('spec:runtime-adapter:AC-6')]
+    #[Group('spec:runtime-adapter')]
+    public function testTheAppMayDescribeItsOwnChange(): void
+    {
+        $seen = [];
+        $transport = static function (string $m, string $url, array $h) use (&$seen): array {
+            $seen[] = $h;
+
+            return ['status' => 201, 'body' => '[{"id":"r1","code":"web"}]'];
+        };
+        $own = rawurlencode('{"title":"Preisliste importiert"}');
+        $context = new FakeContext('GET', '/', ['x-revenexx-context' => 't', 'x-revenexx-audit-note' => 'from-request']);
+        RuntimeAdapter::create(['context' => $context, 'env' => [], 'transport' => $transport, 'auditNote' => $own])->create(self::channels(), ['code' => 'web']);
+        RuntimeAdapter::create(['context' => $context, 'env' => [], 'transport' => $transport, 'auditNote' => ''])->create(self::channels(), ['code' => 'web']);
+
+        $this->assertContains('X-Revenexx-Audit-Note: ' . $own, $seen[0]);
+        $this->assertEmpty(array_filter($seen[1], static fn (string $line): bool => str_starts_with(strtolower($line), 'x-revenexx-audit-note')));
+    }
 }

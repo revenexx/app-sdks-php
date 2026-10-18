@@ -25,6 +25,14 @@ All notable changes to `revenexx/app-sdk` are listed here. The package follows
   one, or with a value that is not one line of visible ASCII, no header is sent and
   nothing else changes. `RemoteAdapter` takes it as the named argument `audit:`.
   `Actor` is unchanged.
+- **The `runtime` adapter forwards the request's `X-Revenexx-Audit-Note`** to the data
+  plane unchanged with every request, next to `X-Revenexx-Audit`. It says what a change
+  is and why (URI-encoded JSON `{"title":"…","reason":"…"}`, sent by the Cockpit on a
+  rollback); Baseline stores it with the history entry. The SDK never reads it and it
+  never changes who is acting. Over 8192 bytes, or not one line of printable ASCII, it
+  is dropped and nothing else changes. An App describing its own change passes
+  `'auditNote' => …` in the runtime config (empty sends none); `RemoteAdapter` takes the
+  named argument `auditNote:`.
 
 ## 1.1.1
 

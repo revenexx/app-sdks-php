@@ -10,7 +10,8 @@ namespace Revenexx\AppSdk\Adapter;
  *
  * Token = the brokered identity forwarded as `x-revenexx-context`; tenant =
  * `x-revenexx-tenant`; market = `x-revenexx-market`; the record-history
- * envelope `x-revenexx-audit` is passed on unchanged; endpoint =
+ * envelope `x-revenexx-audit` and the note `x-revenexx-audit-note` are passed
+ * on unchanged (`auditNote` in the config overrides the note); endpoint =
  * `REVENEXX_DATA_ENDPOINT`, falling back to the platform data plane. A deployed
  * App needs no configuration:
  *
@@ -25,7 +26,7 @@ final class RuntimeAdapter
     public const DEFAULT_DATA_ENDPOINT = 'https://apps.api.revenexx.com';
 
     /**
-     * @param array{context?: mixed, env?: array<string, string|false|null>, transport?: callable} $config
+     * @param array{context?: mixed, env?: array<string, string|false|null>, transport?: callable, auditNote?: string} $config
      */
     public static function create(array $config = []): RemoteAdapter
     {
@@ -48,6 +49,10 @@ final class RuntimeAdapter
             // The record-history envelope of THIS request, passed on unchanged.
             // Bound to the request's token and short-lived: no env fallback.
             audit: $header('x-revenexx-audit'),
+            // What the change is and why. Belongs to THIS request (no env
+            // fallback); names nobody, so an App may describe its own change
+            // with `auditNote` — an empty string sends none.
+            auditNote: $config['auditNote'] ?? $header('x-revenexx-audit-note'),
         );
     }
 

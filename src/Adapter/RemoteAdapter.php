@@ -42,6 +42,7 @@ final class RemoteAdapter implements Adapter, CountsRows, EmitsEvents, UpdatesCo
         private readonly ?string $market = null,
         private readonly string $kind = 'remote',
         private readonly ?string $audit = null,
+        private readonly ?string $auditNote = null,
     ) {
         if ($endpoint === '') {
             throw new \InvalidArgumentException('remote adapter: endpoint is required');
@@ -212,6 +213,18 @@ final class RemoteAdapter implements Adapter, CountsRows, EmitsEvents, UpdatesCo
     }
 
     /**
+     * The record-history note as it may be forwarded: one line of printable
+     * ASCII (a URI-encoded JSON object is exactly that) of at most 8192 bytes —
+     * Baseline's cap on the header as received — else nothing. Its content is
+     * not read here; Baseline parses it and ignores what it cannot read, so a
+     * missing or bad note never fails a call. It never decides who is acting.
+     */
+    public static function auditNote(?string $value): string
+    {
+        return $value !== null && preg_match('/^[\x20-\x7e]{1,8192}$/D', $value) === 1 ? $value : '';
+    }
+
+    /**
      * @param array<string, mixed>|null $body
      * @return array<int, array<string, mixed>>|null
      */
@@ -257,6 +270,11 @@ final class RemoteAdapter implements Adapter, CountsRows, EmitsEvents, UpdatesCo
         $audit = self::auditEnvelope($this->audit);
         if ($audit !== '') {
             $headers[] = 'X-Revenexx-Audit: ' . $audit;
+        }
+        // What the change is and why, passed on unchanged and never read here.
+        $note = self::auditNote($this->auditNote);
+        if ($note !== '') {
+            $headers[] = 'X-Revenexx-Audit-Note: ' . $note;
         }
         if ($prefer !== null) {
             $headers[] = 'Prefer: ' . $prefer;
