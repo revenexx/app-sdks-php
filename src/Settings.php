@@ -8,7 +8,7 @@ namespace Revenexx\AppSdk;
  * App settings — the tenant's configuration for THIS app, read at runtime.
  *
  *   GET {gateway}/v1/settings/apps/{app}[?market={code}]
- *     -> { app, market, settings: { … }, masked: [ … ] }
+ *     -> { app, market, settings: { … }, masked: [ … ], stored: [ … ] }
  *
  * Precedence is the gateway's (market override → stored tenant value →
  * settings.json default); this reader never re-implements it. Its own
@@ -19,6 +19,12 @@ namespace Revenexx\AppSdk;
  *
  * There is no in-flight sharing between concurrent reads: a PHP worker serves one
  * request at a time.
+ *
+ * `set()` stores the App's OWN tenant-level settings (PATCH, same path). The
+ * gateway reads which App is asking from the platform-signed
+ * `x-revenexx-app-context` header the router hands every HTTP invocation, so
+ * a write from an event or schedule run comes back `ok: false`. `ifAbsent`
+ * keeps every key the tenant already stored. Never throws.
  */
 final class Settings
 {
@@ -36,6 +42,8 @@ final class Settings
     private int $timeoutMs;
     /** @var callable(string, array<int, string>, int): array{status: int, body: string} */
     private $transport;
+    /** @var callable(string, string, array<int, string>, string, int): array{status: int, body: string} */
+    private $writeTransport;
     /** @var callable(): float */
     private $clock;
     /** @var ?callable(\Throwable, array{app: string, tenant: string, market: ?string}): void */
@@ -49,8 +57,8 @@ final class Settings
     /**
      * @param array{
      *   app?: string, defaults?: array<string, mixed>, endpoint?: string, ttlMs?: int, errorTtlMs?: int,
-     *   timeoutMs?: int, env?: array<string, string|false|null>, transport?: callable, clock?: callable,
-     *   onError?: callable
+     *   timeoutMs?: int, env?: array<string, string|false|null>, transport?: callable, writeTransport?: callable,
+     *   clock?: callable, onError?: callable
      * } $options
      */
     public function __construct(array $options = [])
@@ -68,6 +76,7 @@ final class Settings
         $this->errorTtlMs = (int) ($options['errorTtlMs'] ?? self::DEFAULT_ERROR_TTL_MS);
         $this->timeoutMs = (int) ($options['timeoutMs'] ?? self::DEFAULT_TIMEOUT_MS);
         $this->transport = $options['transport'] ?? self::curlTransport();
+        $this->writeTransport = $options['writeTransport'] ?? self::curlWriteTransport();
         $this->clock = $options['clock'] ?? static fn (): float => microtime(true) * 1000;
         $this->onError = $options['onError'] ?? null;
     }
@@ -86,7 +95,7 @@ final class Settings
     /**
      * The same read, plus app, tenant, market, masked keys and provenance.
      *
-     * @return array{app: string, tenant: string, market: ?string, settings: array<string, mixed>, masked: list<string>, resolved: bool, error?: string}
+     * @return array{app: string, tenant: string, market: ?string, settings: array<string, mixed>, masked: list<string>, stored: list<string>, resolved: bool, error?: string}
      */
     public function load(mixed $source = null, ?string $market = null): array
     {
@@ -134,6 +143,82 @@ final class Settings
         }
     }
 
+    /**
+     * Store this App's OWN tenant-level settings for the request's tenant.
+     * Never throws: a refusal or an unreachable gateway is `ok: false`, also
+     * reported to `onError`. A write that stored something drops the tenant's
+     * cached reads.
+     *
+     * @param mixed $source a RouteContext, an open-runtimes context, or a header array
+     * @param array<string, mixed> $values
+     * @return array{ok: bool, status: int, written: list<string>, kept: list<string>, ignored: list<string>, error?: string}
+     */
+    public function set(mixed $source, array $values, bool $ifAbsent = false): array
+    {
+        $refused = static fn (int $status, string $error): array => [
+            'ok' => false, 'status' => $status, 'written' => [], 'kept' => [], 'ignored' => [], 'error' => $error,
+        ];
+        $headers = self::headersOf($source);
+        $tenant = $headers['x-revenexx-tenant'] ?? '';
+        if ($source instanceof Router\RouteContext && $source->tenant !== null) {
+            $tenant = $source->tenant;
+        }
+        if ($this->app === '') {
+            return $refused(0, 'no app name (pass `app` or set REVENEXX_APP_NAME)');
+        }
+        if ($tenant === '') {
+            return $refused(0, 'no tenant on the request');
+        }
+        $appContext = $headers['x-revenexx-app-context'] ?? '';
+        if ($appContext === '') {
+            return $refused(0, 'no app context on the request — settings are written from an HTTP route, not an event or schedule run');
+        }
+
+        $token = $headers['x-revenexx-context'] ?? '';
+        $url = "{$this->endpoint}/v1/settings/apps/" . rawurlencode($this->app);
+        $requestHeaders = [
+            'Accept: application/json',
+            'Content-Type: application/json',
+            'X-Revenexx-Tenant: ' . $tenant,
+            'X-Revenexx-App-Context: ' . $appContext,
+        ];
+        if ($token !== '') {
+            $requestHeaders[] = 'Authorization: Bearer ' . $token;
+        }
+        $payload = (string) json_encode(['data' => (object) $values, 'if_absent' => $ifAbsent], JSON_UNESCAPED_SLASHES);
+
+        try {
+            $answer = ($this->writeTransport)('PATCH', $url, $requestHeaders, $payload, $this->timeoutMs);
+        } catch (\Throwable $e) {
+            $this->report($e, $tenant, null);
+
+            return $refused(0, $e->getMessage());
+        }
+        $status = (int) ($answer['status'] ?? 0);
+        $body = json_decode((string) ($answer['body'] ?? ''), true);
+        $body = \is_array($body) ? $body : [];
+        if ($status < 200 || $status >= 300) {
+            $reason = \is_string($body['error'] ?? null) ? $body['error'] : (\is_string($body['message'] ?? null) ? $body['message'] : '');
+            $e = new \RuntimeException("settings: write {$status} for {$this->app}" . ($reason !== '' ? " — {$reason}" : ''), $status);
+            $this->report($e, $tenant, null);
+
+            return $refused($status, $e->getMessage());
+        }
+        $list = static fn (mixed $v): array => array_values(array_filter((array) $v, 'is_string'));
+        $result = [
+            'ok' => true,
+            'status' => $status,
+            'written' => $list($body['written'] ?? []),
+            'kept' => $list($body['kept'] ?? []),
+            'ignored' => $list($body['ignored'] ?? []),
+        ];
+        if ($result['written'] !== []) {
+            $this->forgetTenant($tenant);
+        }
+
+        return $result;
+    }
+
     /** Drop the cache (tests, or right after writing settings). */
     public function clear(): void
     {
@@ -141,7 +226,23 @@ final class Settings
         $this->lastGood = [];
     }
 
-    /** @return array{app: string, tenant: string, market: ?string, settings: array<string, mixed>, masked: list<string>, resolved: bool} */
+    /** Drop every cached read of one tenant (after a write). */
+    private function forgetTenant(string $tenant): void
+    {
+        $prefix = "{$tenant} {$this->app} ";
+        foreach (array_keys($this->cache) as $key) {
+            if (str_starts_with((string) $key, $prefix)) {
+                unset($this->cache[$key]);
+            }
+        }
+        foreach (array_keys($this->lastGood) as $key) {
+            if (str_starts_with((string) $key, $prefix)) {
+                unset($this->lastGood[$key]);
+            }
+        }
+    }
+
+    /** @return array{app: string, tenant: string, market: ?string, settings: array<string, mixed>, masked: list<string>, stored: list<string>, resolved: bool} */
     private function request(string $tenant, string $token, ?string $market): array
     {
         $url = "{$this->endpoint}/v1/settings/apps/" . rawurlencode($this->app) . ($market !== null ? '?market=' . rawurlencode($market) : '');
@@ -157,6 +258,7 @@ final class Settings
         $body = json_decode((string) ($answer['body'] ?? ''), true);
         $body = \is_array($body) ? $body : [];
         $masked = array_values(array_filter((array) ($body['masked'] ?? []), 'is_string'));
+        $stored = array_values(array_filter((array) ($body['stored'] ?? []), 'is_string'));
 
         return [
             'app' => $this->app,
@@ -164,6 +266,7 @@ final class Settings
             'market' => $market,
             'settings' => $this->merge(\is_array($body['settings'] ?? null) ? $body['settings'] : []),
             'masked' => $masked,
+            'stored' => $stored,
             'resolved' => true,
         ];
     }
@@ -190,10 +293,10 @@ final class Settings
         return $out;
     }
 
-    /** @return array{app: string, tenant: string, market: ?string, settings: array<string, mixed>, masked: list<string>, resolved: bool, error: string} */
+    /** @return array{app: string, tenant: string, market: ?string, settings: array<string, mixed>, masked: list<string>, stored: list<string>, resolved: bool, error: string} */
     private function fallback(string $app, string $tenant, ?string $market, string $error): array
     {
-        return ['app' => $app, 'tenant' => $tenant, 'market' => $market, 'settings' => $this->defaults, 'masked' => [], 'resolved' => false, 'error' => $error];
+        return ['app' => $app, 'tenant' => $tenant, 'market' => $market, 'settings' => $this->defaults, 'masked' => [], 'stored' => [], 'resolved' => false, 'error' => $error];
     }
 
     private function report(\Throwable $e, string $tenant, ?string $market): void
@@ -237,6 +340,30 @@ final class Settings
             }
 
             return ['status' => $status, 'body' => (string) $body];
+        };
+    }
+
+    /** @return callable(string, string, array<int, string>, string, int): array{status: int, body: string} */
+    private static function curlWriteTransport(): callable
+    {
+        return static function (string $method, string $url, array $headers, string $body, int $timeoutMs): array {
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_CUSTOMREQUEST => $method,
+                CURLOPT_POSTFIELDS => $body,
+                CURLOPT_TIMEOUT_MS => $timeoutMs,
+                CURLOPT_HTTPHEADER => $headers,
+            ]);
+            $answer = curl_exec($ch);
+            $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $error = curl_error($ch);
+            curl_close($ch);
+            if ($answer === false) {
+                throw new \RuntimeException("settings: {$error}");
+            }
+
+            return ['status' => $status, 'body' => (string) $answer];
         };
     }
 }

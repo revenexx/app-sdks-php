@@ -3,6 +3,17 @@
 All notable changes to `revenexx/app-sdk` are listed here. The package follows
 [semantic versioning](https://semver.org).
 
+## Unreleased
+
+- **`$settings->set($c, $values, ifAbsent: true)`** and **`$c->setSettings($values, true)`**
+  store the App's own tenant-level settings through the gateway
+  (`PATCH /v1/settings/apps/{app}`, PE-1174), forwarding the platform's
+  `x-revenexx-app-context`. Never throws: `['ok' => false, …]` on a refusal, an
+  unreachable gateway, or a request without an app context (event/schedule runs). A
+  write that stored something drops the tenant's cached reads. `writeTransport` is the
+  test seam.
+- **`stored`** on `load()` names the keys the tenant stored rather than defaulted.
+
 ## 1.2.0
 
 - **`Trash::mount` gives an entity with `trash: true` its trash in one call**, the same

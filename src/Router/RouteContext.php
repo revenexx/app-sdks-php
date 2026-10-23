@@ -70,4 +70,17 @@ final class RouteContext
     {
         return $this->settingsReader->load($this, $market);
     }
+
+    /**
+     * Store this App's OWN tenant-level settings for the request's tenant —
+     * `ifAbsent: true` for defaults, so a merchant's choice is never
+     * overwritten. Never throws; see Settings::set().
+     *
+     * @param array<string, mixed> $values
+     * @return array{ok: bool, status: int, written: list<string>, kept: list<string>, ignored: list<string>, error?: string}
+     */
+    public function setSettings(array $values, bool $ifAbsent = false): array
+    {
+        return $this->settingsReader->set($this, $values, $ifAbsent);
+    }
 }

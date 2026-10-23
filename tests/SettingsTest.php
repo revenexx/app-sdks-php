@@ -239,4 +239,130 @@ final class SettingsTest extends TestCase
         $shared = $this->reader(['transport' => $this->gateway()]);
         $this->assertSame($shared, (new App(['name' => 'pages', 'settings' => $shared]))->settings());
     }
+
+    /** @var list<array{method: string, url: string, headers: list<string>, body: array<string, mixed>}> */
+    private array $writes = [];
+
+    /** @param ?callable(array<string, mixed>): array{status: int, body: string} $answer */
+    private function writeGateway(?callable $answer = null): callable
+    {
+        return function (string $method, string $url, array $headers, string $body, int $timeoutMs) use ($answer): array {
+            $decoded = json_decode($body, true);
+            $this->writes[] = ['method' => $method, 'url' => $url, 'headers' => $headers, 'body' => $decoded];
+            if ($answer !== null) {
+                return $answer($decoded);
+            }
+
+            return ['status' => 200, 'body' => (string) json_encode(['app' => 'markets', 'written' => array_keys($decoded['data']), 'kept' => [], 'ignored' => []])];
+        };
+    }
+
+    /** @return array<string, string> */
+    private static function httpRequest(): array
+    {
+        return [...self::request(), 'x-revenexx-app-context' => 'app-ctx-token'];
+    }
+
+    // app-settings AC-12 — A snapshot names the keys the tenant stored
+    #[Group('spec:app-settings:AC-12')]
+    #[Group('spec:app-settings')]
+    public function testASnapshotNamesTheStoredKeys(): void
+    {
+        $snap = $this->reader(['transport' => static fn () => ['status' => 200, 'body' => '{"settings":{"locale_granularity":"language"},"masked":[],"stored":["locale_granularity"]}']])->load(self::request());
+        $this->assertSame(['locale_granularity'], $snap['stored']);
+
+        $down = $this->reader(['transport' => static fn () => throw new \RuntimeException('down')])->load(self::request());
+        $this->assertSame([], $down['stored']);
+
+        // A gateway that predates `stored` reads as "nothing known to be stored".
+        $this->assertSame([], $this->reader(['transport' => $this->gateway()])->load(self::request())['stored']);
+    }
+
+    // app-settings AC-13 — A write goes to the gateway as the App, for the request's tenant
+    #[Group('spec:app-settings:AC-13')]
+    #[Group('spec:app-settings')]
+    public function testAWriteCarriesTheTenantTheTokenAndTheAppContext(): void
+    {
+        $r = $this->reader(['app' => 'markets', 'writeTransport' => $this->writeGateway()]);
+        $result = $r->set(self::httpRequest(), ['locale_granularity' => 'language'], ifAbsent: true);
+
+        $this->assertSame(['ok' => true, 'status' => 200, 'written' => ['locale_granularity'], 'kept' => [], 'ignored' => []], $result);
+        $w = $this->writes[0];
+        $this->assertSame('PATCH', $w['method']);
+        $this->assertSame(Settings::DEFAULT_GATEWAY_ENDPOINT . '/v1/settings/apps/markets', $w['url']);
+        $this->assertContains('X-Revenexx-Tenant: acme', $w['headers']);
+        $this->assertContains('Authorization: Bearer jwt-token', $w['headers']);
+        $this->assertContains('X-Revenexx-App-Context: app-ctx-token', $w['headers']);
+        $this->assertSame(['data' => ['locale_granularity' => 'language'], 'if_absent' => true], $w['body']);
+
+        $r->set(self::httpRequest(), ['url_prefix' => 'none']);
+        $this->assertFalse($this->writes[1]['body']['if_absent']);
+    }
+
+    // app-settings AC-14 — A write never throws, and says why it did not happen
+    #[Group('spec:app-settings:AC-14')]
+    #[Group('spec:app-settings')]
+    public function testAWriteThatCannotBeAcceptedAnswersNotOk(): void
+    {
+        $errors = [];
+        $onError = static function (\Throwable $e) use (&$errors): void {
+            $errors[] = $e->getMessage();
+        };
+        $r = $this->reader(['app' => 'markets', 'writeTransport' => $this->writeGateway(), 'onError' => $onError]);
+
+        $noContext = $r->set(self::request(), ['locale_granularity' => 'language'], true);
+        $this->assertFalse($noContext['ok']);
+        $this->assertSame(0, $noContext['status']);
+        $this->assertStringContainsString('app context', $noContext['error']);
+        $this->assertFalse($r->set(['x-revenexx-app-context' => 'x'], ['a' => 1])['ok']);
+        $this->assertFalse((new Settings(['env' => [], 'writeTransport' => $this->writeGateway()]))->set(self::httpRequest(), ['a' => 1])['ok']);
+        $this->assertSame([], $this->writes);
+
+        $refusing = $this->reader(['app' => 'markets', 'onError' => $onError, 'writeTransport' => $this->writeGateway(static fn () => ['status' => 403, 'body' => '{"error":"an app writes only its own settings","code":"foreign_app_settings"}'])]);
+        $refused = $refusing->set(self::httpRequest(), ['a' => 1]);
+        $this->assertSame([false, 403, [], [], []], [$refused['ok'], $refused['status'], $refused['written'], $refused['kept'], $refused['ignored']]);
+        $this->assertStringContainsString('an app writes only its own settings', $refused['error']);
+
+        $down = $this->reader(['app' => 'markets', 'onError' => $onError, 'writeTransport' => static fn () => throw new \RuntimeException('connection refused')]);
+        $this->assertSame([false, 0], array_values(array_intersect_key($down->set(self::httpRequest(), ['a' => 1]), ['ok' => 0, 'status' => 0])));
+        $this->assertCount(2, $errors);
+    }
+
+    // app-settings AC-15 — A write that stored something drops the tenant's cached reads
+    #[Group('spec:app-settings:AC-15')]
+    #[Group('spec:app-settings')]
+    public function testAWriteThatStoredSomethingDropsTheCachedReads(): void
+    {
+        $answers = [
+            ['status' => 200, 'body' => '{"written":[],"kept":["locale_granularity"],"ignored":[]}'],
+            ['status' => 200, 'body' => '{"written":["locale_granularity"],"kept":[],"ignored":[]}'],
+        ];
+        $r = $this->reader(['app' => 'markets', 'transport' => $this->gateway(), 'writeTransport' => $this->writeGateway(static function () use (&$answers): array {
+            return array_shift($answers);
+        })]);
+
+        $r->load(self::request());
+        $this->assertSame(['locale_granularity'], $r->set(self::httpRequest(), ['locale_granularity' => 'language'], true)['kept']);
+        $r->load(self::request());
+        $this->assertCount(1, $this->calls);
+
+        $r->set(self::httpRequest(), ['locale_granularity' => 'language']);
+        $r->load(self::request());
+        $this->assertCount(2, $this->calls);
+    }
+
+    // app-settings AC-16 — Every route context can write the App's settings
+    #[Group('spec:app-settings:AC-16')]
+    #[Group('spec:app-settings')]
+    public function testEveryRouteContextCanWriteTheSettings(): void
+    {
+        $app = new App(['name' => 'markets', 'settings' => ['env' => [], 'writeTransport' => $this->writeGateway()]]);
+        $app->post('/markets/defaults', static fn (RouteContext $c) => $c->json($c->setSettings(['locale_granularity' => 'language'], true)));
+        $out = FakeContext::call($app, 'POST', '/markets/defaults', ['headers' => ['x-revenexx-app-context' => 'app-ctx']]);
+
+        $this->assertSame(200, $out['status']);
+        $this->assertTrue($out['data']['ok']);
+        $this->assertSame(['locale_granularity'], $out['data']['written']);
+        $this->assertContains('X-Revenexx-App-Context: app-ctx', $this->writes[0]['headers']);
+    }
 }
