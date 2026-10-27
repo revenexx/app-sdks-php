@@ -1,0 +1,6 @@
+# Ownership per ADR-0104. Review is requested from the owning team.
+#
+# revenexx/app-sdks-php is split from php/sdk in the SDK's main repository, and so
+# is this file. Change it there, never in the split: a commit made in
+# revenexx/app-sdks-php stops every later split.
+* @revenexx/product-engineering
