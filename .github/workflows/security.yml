@@ -1,5 +1,5 @@
-# The shared security scan (revenexx/.github, PE-1135). Copy this file to
-# .github/workflows/security.yml; nothing in it is repository-specific.
+# The shared security scan (revenexx/.github, PE-1135), run from the local copy in
+# security-scan.yml: a public repository cannot call the private original.
 name: Security
 
 on:
@@ -24,4 +24,4 @@ permissions:
 
 jobs:
   scan:
-    uses: revenexx/.github/.github/workflows/security-scan.yml@v1
+    uses: ./.github/workflows/security-scan.yml
