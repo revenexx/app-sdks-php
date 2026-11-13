@@ -1,0 +1,218 @@
+# COPY of revenexx/.github .github/workflows/security-scan.yml (main, 069c32e).
+# A public repository cannot call a workflow from the private revenexx/.github,
+# so this one keeps its own copy. Keep it identical to the original: change it
+# there first, then copy it here. Dependabot does not bump the image digests.
+#
+# The shared security scan (PE-1135): what a repository's own code, history
+# and configuration contain, as opposed to what its deployed image contains
+# (that is sbom.yml and Dependency-Track).
+#
+# A repository calls it from its own workflow:
+#
+#   # .github/workflows/security.yml
+#   name: Security
+#   on:
+#     pull_request:
+#     push:
+#       branches: [main]
+#     schedule:
+#       - cron: "0 3 * * 1"    # weekly: advisories land against unchanged code
+#     workflow_dispatch:
+#   permissions:
+#     contents: read
+#   jobs:
+#     scan:
+#       uses: revenexx/.github/.github/workflows/security-scan.yml@v1
+#
+# Six layers, each a pinned container:
+#
+#   secrets   gitleaks      the whole git history
+#   deps      osv-scanner   lockfiles: composer, npm, pnpm, yarn, go, pip, ...
+#   code      Semgrep       the p/default rules (SAST)
+#   ci        zizmor        GitHub workflow security (offline)
+#             actionlint    GitHub workflow correctness
+#   config    Trivy config  Dockerfiles, Compose, Terraform, Kubernetes
+#
+# NON-BLOCKING: findings are reported, not failed on. A gate switched on before
+# its baseline is clean gets switched off within a week (revenexx-integrations,
+# PO-279). Each layer writes its counts to the run summary, and every result
+# is kept as JSON in the artifact `security-scan` (14 days).
+#
+# A scan that did not run is a failure. A green check that scanned nothing is
+# worse than a red one: a shallow history, an empty mount and a scanner error
+# all fail the step.
+#
+# There is no SARIF upload: GitHub code scanning on private repositories needs
+# GitHub Code Security, which we do not license.
+#
+# False positives:
+#   - gitleaks reads `.gitleaks.toml` from the repository root, e.g. for
+#     placeholders in docs.
+#   - Semgrep honours `# nosemgrep` and `.semgrepignore`.
+#   - Trivy reads `.trivyignore`.
+#
+# Images are pinned by digest: they run with the repository mounted, and a tag
+# can be repointed. Dependabot does not read images inside `run:`, so bump a
+# digest together with the version in the step name, from
+# `docker buildx imagetools inspect <image>:<version>`.
+name: Security scan
+
+on:
+  workflow_call:
+    inputs:
+      retention-days:
+        description: How long GitHub keeps the JSON results.
+        type: number
+        default: 14
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: security scan (secrets · deps · code · ci · config)
+    # The runner is the caller's choice, not this repository's: inside a
+    # reusable workflow the vars context resolves against the repository that
+    # called it. A repository joins the self-hosted pool by setting
+    # CI_RUNNER_UBUNTU to the scale set's name itself; the organisation default
+    # keeps every other caller, and every fork pull request, on ubuntu-latest.
+    runs-on: ${{ vars.CI_RUNNER_UBUNTU || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # No credentials after checkout: every later step runs third-party
+          # code with the repository mounted.
+          persist-credentials: false
+          # gitleaks scans the history. A shallow clone would let it report a
+          # clean history it never saw.
+          fetch-depth: 0
+
+      - name: Prepare
+        run: |
+          mkdir -p scan-results
+          {
+            echo "## Security scan"
+            echo
+            echo "Non-blocking. JSON results in the artifact \`security-scan\`."
+            echo
+            echo "| Layer | Tool | Findings |"
+            echo "|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Secrets, across the history (gitleaks 8.28.0)
+        run: |
+          set -o pipefail
+          if [ "$(git rev-parse --is-shallow-repository)" != "false" ]; then
+            echo "::error::the checkout is shallow; gitleaks would report a clean history it has not seen"
+            exit 1
+          fi
+          rc=0
+          docker run --rm -v "$PWD:/repo:ro" -v "$PWD/scan-results:/out" \
+            ghcr.io/gitleaks/gitleaks@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854 \
+            detect --source /repo --redact --no-banner --no-color -v \
+            --exit-code 0 --report-format json --report-path /out/gitleaks.json \
+            2>&1 | tee scan-results/gitleaks.log || rc=$?
+          commits=$(grep -oE '[0-9]+ commits scanned' scan-results/gitleaks.log | grep -oE '^[0-9]+' || echo 0)
+          if [ "$rc" -ne 0 ] || [ "$commits" -eq 0 ] || [ ! -s scan-results/gitleaks.json ]; then
+            echo "::error::gitleaks did not complete (exit $rc, $commits commits scanned)"
+            exit 1
+          fi
+          n=$(jq length scan-results/gitleaks.json)
+          echo "| secrets | gitleaks ($commits commits) | $n |" >> "$GITHUB_STEP_SUMMARY"
+          jq -r '.[] | "::warning file=\(.File),line=\(.StartLine)::possible secret (\(.RuleID)) in commit \(.Commit[0:7])"' scan-results/gitleaks.json
+
+      # Exit 0: nothing found. 1: vulnerabilities found. Anything else: the
+      # scan itself failed. No lockfile is fine (--allow-no-lockfiles).
+      - name: Dependencies, from the lockfiles (osv-scanner 2.2.3)
+        run: |
+          rc=0
+          docker run --rm -v "$PWD:/repo:ro" -v "$PWD/scan-results:/out" \
+            ghcr.io/google/osv-scanner@sha256:fca9be4446310094be881b63f6862879282647f121ad3326e91dd90afbf8ef50 \
+            scan source --recursive --allow-no-lockfiles --format json --output /out/osv.json /repo \
+            > scan-results/osv.log 2>&1 || rc=$?
+          if [ "$rc" -gt 1 ] || [ ! -s scan-results/osv.json ]; then
+            cat scan-results/osv.log
+            echo "::error::osv-scanner did not complete (exit $rc)"
+            exit 1
+          fi
+          n=$(jq '[.results[]?.packages[]?.vulnerabilities[]?] | length' scan-results/osv.json)
+          echo "| deps | osv-scanner | $n |" >> "$GITHUB_STEP_SUMMARY"
+
+      # Semgrep exits 0 with findings unless --error is given; a non-zero exit
+      # means it failed. Parse errors (e.g. Blade templates) are not failures.
+      - name: Code (Semgrep 1.140.0, p/default)
+        run: |
+          rc=0
+          docker run --rm -v "$PWD:/src:ro" -v "$PWD/scan-results:/out" -w /src \
+            semgrep/semgrep@sha256:4372a1de903521f9f10f877b6caf15d150d17e1ca592582682c8d02b77cbd4f6 \
+            semgrep scan --config p/default --metrics off --json --output /out/semgrep.json --quiet /src \
+            > scan-results/semgrep.log 2>&1 || rc=$?
+          if [ "$rc" -ne 0 ] || [ ! -s scan-results/semgrep.json ]; then
+            cat scan-results/semgrep.log
+            echo "::error::Semgrep did not complete (exit $rc)"
+            exit 1
+          fi
+          n=$(jq '.results | length' scan-results/semgrep.json)
+          by=$(jq -r '[.results[].extra.severity] | group_by(.) | map("\(.[0] | ascii_downcase) \(length)") | join(", ")' scan-results/semgrep.json)
+          echo "| code | Semgrep | $n${by:+ ($by)} |" >> "$GITHUB_STEP_SUMMARY"
+          jq -r '.results[] | select(.extra.severity == "ERROR") | "::warning file=\(.path),line=\(.start.line)::\(.check_id)"' scan-results/semgrep.json
+
+      # zizmor exits 0 when clean and 10 to 14 by the worst finding's severity.
+      # actionlint exits 1 on findings and above that when it fails. Both are
+      # skipped visibly in a repository without workflows.
+      - name: CI workflows (zizmor 1.29.0, actionlint 1.7.7)
+        run: |
+          if [ ! -d .github/workflows ]; then
+            echo "::notice::no .github/workflows; workflow scan skipped"
+            echo "| ci | zizmor, actionlint | skipped (no workflows) |" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          rc=0
+          docker run --rm -v "$PWD:/repo:ro" \
+            ghcr.io/zizmorcore/zizmor@sha256:863026d54f91271b10b60b67ad8054cb37120167e162482597db102b3026a284 \
+            --offline --format json /repo/.github/workflows \
+            > scan-results/zizmor.json 2> scan-results/zizmor.log || rc=$?
+          if { [ "$rc" -ne 0 ] && { [ "$rc" -lt 10 ] || [ "$rc" -gt 14 ]; }; } || ! jq empty scan-results/zizmor.json 2>/dev/null; then
+            cat scan-results/zizmor.log
+            echo "::error::zizmor did not complete (exit $rc)"
+            exit 1
+          fi
+          rc=0
+          docker run --rm -v "$PWD:/repo:ro" -w /repo \
+            rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 \
+            -format '{{json .}}' > scan-results/actionlint.json 2> scan-results/actionlint.log || rc=$?
+          if [ "$rc" -gt 1 ]; then
+            cat scan-results/actionlint.log
+            echo "::error::actionlint did not complete (exit $rc)"
+            exit 1
+          fi
+          z=$(jq length scan-results/zizmor.json)
+          a=$(jq length scan-results/actionlint.json 2>/dev/null || echo 0)
+          echo "| ci | zizmor / actionlint | $z / $a |" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Configuration (Trivy 0.75.0 config)
+        run: |
+          rc=0
+          docker run --rm -v "$PWD:/repo:ro" -v "$PWD/scan-results:/out" \
+            aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa \
+            config --quiet --format json --output /out/trivy-config.json --exit-code 0 /repo \
+            > scan-results/trivy.log 2>&1 || rc=$?
+          if [ "$rc" -ne 0 ] || [ ! -s scan-results/trivy-config.json ]; then
+            cat scan-results/trivy.log
+            echo "::error::Trivy did not complete (exit $rc)"
+            exit 1
+          fi
+          n=$(jq '[.Results[]?.Misconfigurations[]?] | length' scan-results/trivy-config.json)
+          hc=$(jq '[.Results[]?.Misconfigurations[]? | select(.Severity == "HIGH" or .Severity == "CRITICAL")] | length' scan-results/trivy-config.json)
+          echo "| config | Trivy | $n ($hc high or critical) |" >> "$GITHUB_STEP_SUMMARY"
+
+      # Logs can quote the lines around a redacted secret, so the artifact is
+      # short-lived and only readable by people with access to the repository.
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: security-scan
+          path: scan-results/
+          retention-days: ${{ inputs.retention-days }}
+          if-no-files-found: warn
