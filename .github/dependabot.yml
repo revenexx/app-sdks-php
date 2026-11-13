@@ -1,0 +1,19 @@
+# Dependabot (PE-1128), from revenexx/.github templates/dependabot.yml.
+# The reasons behind every setting are in the template; only the
+# ecosystems and folders of this repository are kept here.
+version: 2
+updates:
+  - package-ecosystem: "composer"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      composer-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      composer:
+        applies-to: version-updates
+        patterns: ["*"]
