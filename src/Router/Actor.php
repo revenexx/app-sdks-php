@@ -12,6 +12,13 @@ namespace Revenexx\AppSdk\Router;
  * person proving themselves arrive in the same headers. Today the platform
  * verifies no person itself, so `authenticated()` answers false for every
  * caller — the honest answer.
+ *
+ * A sales rep (ADR-0132 §9, PE-918) arrives as `x-revenexx-caller: rep` with
+ * `x-revenexx-rep` (the rep code) and never with the contact headers. Plane
+ * `rep`, trust always `asserted`. Both halves are needed; when a rep is named
+ * the contact headers are ignored (the narrower reading). The record-history
+ * envelope `x-revenexx-audit` is not read here — the adapters forward it to the
+ * data plane unchanged.
  */
 final class Actor
 {
@@ -22,12 +29,14 @@ final class Actor
         'contact' => 'x-revenexx-contact',
         'organization' => 'x-revenexx-organization',
         'permissions' => 'x-revenexx-permissions',
+        'caller' => 'x-revenexx-caller',
+        'rep' => 'x-revenexx-rep',
     ];
 
     /**
      * @param list<string> $permissions
      * @param 'authenticated'|'asserted'|'none' $trust
-     * @param 'contact'|'operator'|'system' $plane
+     * @param 'rep'|'contact'|'operator'|'system' $plane
      */
     private function __construct(
         public readonly ?string $user,
@@ -37,6 +46,7 @@ final class Actor
         public readonly array $permissions,
         public readonly string $trust,
         public readonly string $plane,
+        public readonly ?string $rep = null,
     ) {
     }
 
@@ -51,7 +61,12 @@ final class Actor
         $nullIfEmpty = static fn (string $v): ?string => trim($v) === '' ? null : trim($v);
 
         $user = $nullIfEmpty($read(self::HEADERS['user']));
-        $contact = $nullIfEmpty($read(self::HEADERS['contact']));
+        // A rep needs the caller kind AND the code; when one is named the
+        // contact headers are ignored.
+        $callerKind = strtolower(trim($read(self::HEADERS['caller'])));
+        $rep = $callerKind === 'rep' ? $nullIfEmpty($read(self::HEADERS['rep'])) : null;
+        $contact = $rep === null ? $nullIfEmpty($read(self::HEADERS['contact'])) : null;
+        $organization = $rep === null ? $nullIfEmpty($read(self::HEADERS['organization'])) : null;
         $permissions = array_values(array_filter(
             array_map('trim', explode(',', $read(self::HEADERS['permissions']))),
             static fn (string $p): bool => $p !== '',
@@ -61,19 +76,23 @@ final class Actor
         // the SDK does not know — or `authenticated` beside no user — degrades
         // to `asserted`, never upwards.
         $raw = strtolower(trim($read(self::HEADERS['trust'])));
-        $trust = $user === null && $contact === null
+        // A rep is asserted by the rep portal's server, never authenticated.
+        $trust = $user === null && $contact === null && $rep === null
             ? 'none'
-            : ($user !== null && $raw === 'authenticated' ? 'authenticated' : 'asserted');
-        $plane = $contact !== null ? 'contact' : ($user !== null ? 'operator' : 'system');
+            : ($rep === null && $user !== null && $raw === 'authenticated' ? 'authenticated' : 'asserted');
+        $plane = $rep !== null
+            ? 'rep'
+            : ($contact !== null ? 'contact' : ($user !== null ? 'operator' : 'system'));
 
         return new self(
             $user,
             $nullIfEmpty($read(self::HEADERS['email'])),
             $contact,
-            $nullIfEmpty($read(self::HEADERS['organization'])),
+            $organization,
             $permissions,
             $trust,
             $plane,
+            $rep,
         );
     }
 

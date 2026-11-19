@@ -88,4 +88,47 @@ final class ActorTest extends TestCase
         $b = Actor::fromHeaders(static fn (string $n): ?string => $bag[$n] ?? null);
         $this->assertSame(['c1', null, [], 'asserted'], [$b->contact, $b->user, $b->permissions, $b->trust]);
     }
+
+    // acting-person AC-8 — A rep the gateway resolved is the rep plane, and only asserted
+    #[Group('spec:acting-person:AC-8')]
+    #[Group('spec:acting-person')]
+    public function testARepIsTheRepPlaneAndOnlyAsserted(): void
+    {
+        $a = self::from([
+            'x-revenexx-caller' => ' Rep ',
+            'x-revenexx-rep' => 'MÜLLER-01',
+            'x-revenexx-actor-trust' => 'authenticated',
+            'x-revenexx-permissions' => 'quotes.create,sales_reps.act_for_buyer',
+        ]);
+        $this->assertSame(['rep', 'MÜLLER-01', 'asserted', false], [$a->plane, $a->rep, $a->trust, $a->authenticated()]);
+        $this->assertTrue($a->holds('quotes.create'));
+        $this->assertFalse($a->holds('orders.cancel'));
+    }
+
+    // acting-person AC-9 — A rep with no code is no rep
+    #[Group('spec:acting-person:AC-9')]
+    #[Group('spec:acting-person')]
+    public function testARepWithNoCodeIsNoRep(): void
+    {
+        $a = self::from(['x-revenexx-caller' => 'rep', 'x-revenexx-rep' => '  ']);
+        $this->assertSame([null, 'system', 'none'], [$a->rep, $a->plane, $a->trust]);
+        $b = self::from(['x-revenexx-rep' => 'R1', 'x-revenexx-contact' => 'c1']);
+        $this->assertSame([null, 'contact'], [$b->rep, $b->plane]);
+        $c = self::from(['x-revenexx-caller' => 'contact', 'x-revenexx-contact' => 'c1']);
+        $this->assertSame(['contact', null, 'c1'], [$c->plane, $c->rep, $c->contact]);
+    }
+
+    // acting-person AC-10 — A rep is never read as a contact
+    #[Group('spec:acting-person:AC-10')]
+    #[Group('spec:acting-person')]
+    public function testARepIsNeverReadAsAContact(): void
+    {
+        $a = self::from([
+            'x-revenexx-caller' => 'rep',
+            'x-revenexx-rep' => 'R1',
+            'x-revenexx-contact' => 'c1',
+            'x-revenexx-organization' => 'o1',
+        ]);
+        $this->assertSame(['rep', 'R1', null, null], [$a->plane, $a->rep, $a->contact, $a->organization]);
+    }
 }
