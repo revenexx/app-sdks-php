@@ -160,4 +160,22 @@ final class ActorTest extends TestCase
         ]);
         $this->assertSame(['rep', 'R1', null, null], [$a->plane, $a->rep, $a->contact, $a->organization]);
     }
+
+    // acting-person AC-11 — A rep code arrives percent-encoded as UTF-8
+    #[Group('spec:acting-person:AC-11')]
+    #[Group('spec:acting-person')]
+    public function testAPercentEncodedRepCodeDecodes(): void
+    {
+        $a = self::from(['x-revenexx-caller' => 'rep', 'x-revenexx-rep' => 'M%C3%9CLLER-01']);
+        $this->assertSame(['rep', 'MÜLLER-01'], [$a->plane, $a->rep]);
+
+        foreach (['M%ZZLLER-01', 'M%C3LLER-01', 'R1%'] as $bad) {
+            $b = self::from([
+                'x-revenexx-caller' => 'rep',
+                'x-revenexx-rep' => $bad,
+                'x-revenexx-permissions' => 'quotes.create',
+            ]);
+            $this->assertSame([null, 'system', false], [$b->rep, $b->plane, $b->holds('quotes.create')], $bad);
+        }
+    }
 }

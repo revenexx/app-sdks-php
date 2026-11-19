@@ -65,7 +65,7 @@ final class Actor
         // gated on the caller kind, not on the code: a call that says `rep` is
         // never read as a contact, with or without a code.
         $isRepCall = strtolower(trim($read(self::HEADERS['caller']))) === 'rep';
-        $rep = $isRepCall ? $nullIfEmpty($read(self::HEADERS['rep'])) : null;
+        $rep = $isRepCall ? self::decodeRep($nullIfEmpty($read(self::HEADERS['rep']))) : null;
         $contact = $isRepCall ? null : $nullIfEmpty($read(self::HEADERS['contact']));
         $organization = $isRepCall ? null : $nullIfEmpty($read(self::HEADERS['organization']));
         // The permissions belong to the principal the gateway resolved. A rep
@@ -108,5 +108,24 @@ final class Actor
     public function authenticated(): bool
     {
         return $this->trust === 'authenticated';
+    }
+
+    /**
+     * The rep header carries the code percent-encoded as UTF-8 (RFC 3986), the
+     * way `encodeURIComponent` writes it. A value that does not decode — a `%`
+     * without two hex digits, or bytes that are not UTF-8 — is no rep, exactly
+     * where JavaScript's `decodeURIComponent` throws.
+     */
+    private static function decodeRep(?string $v): ?string
+    {
+        if ($v === null || preg_match('/%(?![0-9A-Fa-f]{2})/', $v) === 1) {
+            return null;
+        }
+        $decoded = rawurldecode($v);
+        if (preg_match('//u', $decoded) !== 1) {
+            return null;
+        }
+
+        return trim($decoded) === '' ? null : trim($decoded);
     }
 }
