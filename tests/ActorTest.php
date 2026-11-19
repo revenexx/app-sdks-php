@@ -96,11 +96,11 @@ final class ActorTest extends TestCase
     {
         $a = self::from([
             'x-revenexx-caller' => ' Rep ',
-            'x-revenexx-rep' => 'MÜLLER-01',
+            'x-revenexx-rep' => 'MUELLER-01',
             'x-revenexx-actor-trust' => 'authenticated',
             'x-revenexx-permissions' => 'quotes.create,sales_reps.act_for_buyer',
         ]);
-        $this->assertSame(['rep', 'MÜLLER-01', 'asserted', false], [$a->plane, $a->rep, $a->trust, $a->authenticated()]);
+        $this->assertSame(['rep', 'MUELLER-01', 'asserted', false], [$a->plane, $a->rep, $a->trust, $a->authenticated()]);
         $this->assertTrue($a->holds('quotes.create'));
         $this->assertFalse($a->holds('orders.cancel'));
     }
@@ -127,11 +127,13 @@ final class ActorTest extends TestCase
             'x-revenexx-caller' => 'rep',
             'x-revenexx-contact' => 'c1',
             'x-revenexx-organization' => 'o1',
+            'x-revenexx-permissions' => 'quotes.create',
         ]);
         $this->assertSame(
-            [null, null, null, 'system', 'none'],
-            [$a->rep, $a->contact, $a->organization, $a->plane, $a->trust],
+            [null, null, null, 'system', 'none', []],
+            [$a->rep, $a->contact, $a->organization, $a->plane, $a->trust, $a->permissions],
         );
+        $this->assertFalse($a->holds('quotes.create'));
 
         // A user beside it is an operator at most, and never authenticated.
         $b = self::from([
@@ -139,8 +141,10 @@ final class ActorTest extends TestCase
             'x-revenexx-actor' => 'sub-1',
             'x-revenexx-actor-trust' => 'authenticated',
             'x-revenexx-contact' => 'c1',
+            'x-revenexx-permissions' => 'quotes.create',
         ]);
         $this->assertSame([null, 'operator', 'asserted'], [$b->contact, $b->plane, $b->trust]);
+        $this->assertFalse($b->holds('quotes.create'));
     }
 
     // acting-person AC-10 — A rep is never read as a contact

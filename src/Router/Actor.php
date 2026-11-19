@@ -46,7 +46,7 @@ final class Actor
         public readonly array $permissions,
         public readonly string $trust,
         public readonly string $plane,
-        public readonly ?string $rep = null,
+        public readonly ?string $rep,
     ) {
     }
 
@@ -68,7 +68,9 @@ final class Actor
         $rep = $isRepCall ? $nullIfEmpty($read(self::HEADERS['rep'])) : null;
         $contact = $isRepCall ? null : $nullIfEmpty($read(self::HEADERS['contact']));
         $organization = $isRepCall ? null : $nullIfEmpty($read(self::HEADERS['organization']));
-        $permissions = array_values(array_filter(
+        // The permissions belong to the principal the gateway resolved. A rep
+        // call without a code resolved nobody, so it holds nothing.
+        $permissions = $isRepCall && $rep === null ? [] : array_values(array_filter(
             array_map('trim', explode(',', $read(self::HEADERS['permissions']))),
             static fn (string $p): bool => $p !== '',
         ));
