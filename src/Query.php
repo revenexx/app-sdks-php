@@ -56,13 +56,13 @@ final class Query
                 throw new \InvalidArgumentException("query: unsupported operator '{$op}'");
             }
             $value = $cond['value'] ?? null;
-            $v = \is_array($value) ? '(' . implode(',', $value) . ')' : self::scalar($value);
+            $v = \is_array($value) ? self::inList($value) : self::scalar($value);
 
             return "{$op}.{$v}";
         }
 
         if (\is_array($cond)) {
-            return 'in.(' . implode(',', array_map([self::class, 'scalar'], $cond)) . ')';
+            return 'in.' . self::inList($cond);
         }
 
         // `eq.null` compares against the string 'null'; a null value means
@@ -72,6 +72,27 @@ final class Query
         }
 
         return 'eq.' . self::scalar($cond);
+    }
+
+    /**
+     * A value list as PostgREST reads it: `("a","b")`. Every value is
+     * double-quoted with `\` and `"` escaped, so a comma, a parenthesis, a
+     * quote or a backslash inside a value stays part of that value instead of
+     * splitting the list or breaking the filter. `null` stays the bare word
+     * `null`. Same as the JavaScript SDK.
+     *
+     * @param array<mixed> $values
+     */
+    private static function inList(array $values): string
+    {
+        $quoted = array_map(
+            static fn (mixed $v): string => $v === null
+                ? 'null'
+                : '"' . addcslashes(self::scalar($v), '\\"') . '"',
+            array_values($values),
+        );
+
+        return '(' . implode(',', $quoted) . ')';
     }
 
     private static function scalar(mixed $v): string

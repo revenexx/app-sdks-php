@@ -101,6 +101,19 @@ final class ParityTest extends TestCase
         }
     }
 
+    /** @return iterable<string, array{array<string, mixed>, list<string>}> */
+    public static function listValueCases(): iterable
+    {
+        if (self::fixture() === []) {
+            yield from self::absent(2);
+
+            return;
+        }
+        foreach (self::fixture()['listValues']['matches'] as $case) {
+            yield $case['name'] => [$case['where'], $case['ids']];
+        }
+    }
+
     /**
      * @param array<string, mixed>         $query
      * @param list<array{string, string}> $params
@@ -133,6 +146,23 @@ final class ParityTest extends TestCase
         self::requireFixture();
         $e = self::things();
         $db = new Client(AdapterRegistry::create('mock', ['seed' => ['things' => self::fixture()['rows']]]), [$e->name => $e]);
+
+        self::assertSame($ids, array_column($db->list($e, ['where' => $where, 'order' => 'id.asc']), 'id'));
+    }
+
+    /**
+     * @param array<string, mixed> $where
+     * @param list<string>         $ids
+     */
+    // runtime-parity AC-2 — A query matches the same rows in both mocks
+    #[Group('spec:runtime-parity:AC-2')]
+    #[Group('spec:runtime-parity')]
+    #[DataProvider('listValueCases')]
+    public function testTheMockMatchesTheFixturesListValueRows(array $where, array $ids): void
+    {
+        self::requireFixture();
+        $e = self::things();
+        $db = new Client(AdapterRegistry::create('mock', ['seed' => ['things' => self::fixture()['listValues']['rows']]]), [$e->name => $e]);
 
         self::assertSame($ids, array_column($db->list($e, ['where' => $where, 'order' => 'id.asc']), 'id'));
     }

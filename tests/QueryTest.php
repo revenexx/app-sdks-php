@@ -35,11 +35,26 @@ final class QueryTest extends TestCase
         parse_str($qs, $parsed);
         $this->assertSame('eq.published', $parsed['status']);
         $this->assertSame('gte.5', $parsed['n']);
-        $this->assertSame('in.(en,de)', $parsed['locale']);
+        $this->assertSame('in.("en","de")', $parsed['locale']);
         $this->assertSame('id,name', $parsed['select']);
         $this->assertSame('created_at.desc', $parsed['order']);
         $this->assertSame('10', $parsed['limit']);
         $this->assertSame('20', $parsed['offset']);
+    }
+
+    // query-language AC-9 — A value in a list is sent whole
+    #[Group('spec:query-language:AC-9')]
+    #[Group('spec:query-language')]
+    public function testAListValueWithACommaParenthesisQuoteOrBackslashStaysOneValue(): void
+    {
+        $qs = Query::toParams(['where' => [
+            'sku' => ['A,B', 'C(1)', 'say "hi"', 'back\\slash'],
+            'n' => ['op' => 'in', 'value' => [1, 2]],
+        ]]);
+
+        parse_str($qs, $parsed);
+        $this->assertSame('in.("A,B","C(1)","say \\"hi\\"","back\\\\slash")', $parsed['sku']);
+        $this->assertSame('in.("1","2")', $parsed['n']);
     }
 
     // query-language AC-4 — An unknown operator is refused

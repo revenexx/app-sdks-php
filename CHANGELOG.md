@@ -5,6 +5,11 @@ All notable changes to `revenexx/app-sdk` are listed here. The package follows
 
 ## Unreleased
 
+- **A value list in `where` keeps each value whole.** `['col' => [a, b]]` and
+  `['op' => 'in', 'value' => [a, b]]` send every value double-quoted, with `"` and
+  `\` inside it escaped, the way PostgREST reads a list. A value with a comma used
+  to be split in two and match nothing; one with a parenthesis broke the filter
+  and failed the whole read. Same as the JavaScript SDK (`query-language` AC-9).
 - **`$c->actor->rep`** and plane **`rep`**: a sales rep the gateway resolved
   (`x-revenexx-caller: rep` with `x-revenexx-rep`, ADR-0132 §9). Trust is
   always `asserted`. The rep code arrives percent-encoded as UTF-8 and is
