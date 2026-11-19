@@ -118,6 +118,31 @@ final class ActorTest extends TestCase
         $this->assertSame(['contact', null, 'c1'], [$c->plane, $c->rep, $c->contact]);
     }
 
+    // acting-person AC-9 — A rep with no code is no rep
+    #[Group('spec:acting-person:AC-9')]
+    #[Group('spec:acting-person')]
+    public function testARepCallWithNoCodeIsNeverReadAsAContact(): void
+    {
+        $a = self::from([
+            'x-revenexx-caller' => 'rep',
+            'x-revenexx-contact' => 'c1',
+            'x-revenexx-organization' => 'o1',
+        ]);
+        $this->assertSame(
+            [null, null, null, 'system', 'none'],
+            [$a->rep, $a->contact, $a->organization, $a->plane, $a->trust],
+        );
+
+        // A user beside it is an operator at most, and never authenticated.
+        $b = self::from([
+            'x-revenexx-caller' => 'rep',
+            'x-revenexx-actor' => 'sub-1',
+            'x-revenexx-actor-trust' => 'authenticated',
+            'x-revenexx-contact' => 'c1',
+        ]);
+        $this->assertSame([null, 'operator', 'asserted'], [$b->contact, $b->plane, $b->trust]);
+    }
+
     // acting-person AC-10 — A rep is never read as a contact
     #[Group('spec:acting-person:AC-10')]
     #[Group('spec:acting-person')]

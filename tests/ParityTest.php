@@ -283,6 +283,7 @@ final class ParityTest extends TestCase
             'email' => $a->email,
             'contact' => $a->contact,
             'organization' => $a->organization,
+            'rep' => $a->rep,
             'permissions' => $a->permissions,
             'trust' => $a->trust,
             'plane' => $a->plane,

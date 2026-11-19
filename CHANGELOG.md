@@ -6,9 +6,9 @@ All notable changes to `revenexx/app-sdk` are listed here. The package follows
 ## Unreleased
 
 - **`$c->actor->rep`** and plane **`rep`**: a sales rep the gateway resolved
-  (`x-revenexx-caller: rep` with `x-revenexx-rep`, ADR-0132 §9, PE-1430). Trust is
-  always `asserted`. A rep without a code is no rep, and contact headers that arrive
-  beside a rep are ignored. `Actor::HEADERS` gains `caller` and `rep`. Same promises
+  (`x-revenexx-caller: rep` with `x-revenexx-rep`, ADR-0132 §9). Trust is
+  always `asserted`. A rep without a code is no rep, and a call that says `rep`
+  ignores the contact headers, with or without a code. `Actor::HEADERS` gains `caller` and `rep`. Same promises
   as the JavaScript SDK (`acting-person` AC-8 to AC-10).
 - **`$settings->set($c, $values, ifAbsent: true)`** and **`$c->setSettings($values, true)`**
   store the App's own tenant-level settings through the gateway
