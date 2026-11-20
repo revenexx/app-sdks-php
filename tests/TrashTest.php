@@ -440,4 +440,91 @@ final class TrashTest extends TestCase
         $this->assertSame(Settings::DEFAULT_GATEWAY_ENDPOINT . '/v1/audit/settings', $calls[0]['url']);
         $this->assertContains('Authorization: Bearer ctx', $calls[0]['headers']);
     }
+
+    /**
+     * `trash: true` without declaring the five columns: Baseline adds them, the
+     * generated column list does not name them, and the write check still lets
+     * every write the trash makes through.
+     *
+     * @param array<string, list<array<string, mixed>>> $seed
+     * @param array<string, mixed>                      $extra
+     * @return array{Client, Trash, App, Entity, Entity}
+     */
+    private static function buildFlagOnly(array $seed, array $extra = []): array
+    {
+        $o = new Entity('organizations', 't_organizations', 'id', [
+            'id' => ['type' => 'uuid', 'pk' => true],
+            'name' => ['type' => 'text', 'notNull' => true],
+        ], self::OPS, trash: true);
+        $c = new Entity('contacts', 't_contacts', 'id', [
+            'id' => ['type' => 'uuid', 'pk' => true],
+            'organization_id' => ['type' => 'uuid', 'notNull' => true],
+            'email' => ['type' => 'text'],
+        ], self::OPS, trash: true);
+        $db = new Client(AdapterRegistry::create('mock', ['seed' => $seed]), ['organizations' => $o, 'contacts' => $c]);
+        $app = new App(['name' => 'customers']);
+        $trash = Trash::mount($app, $db, $o, [
+            'path' => '/organizations',
+            'children' => [['name' => 'contacts', 'entity' => $c, 'column' => 'organization_id']],
+            'now' => self::now(...),
+            ...$extra,
+        ]);
+
+        return [$db, $trash, $app, $o, $c];
+    }
+
+    // data-client AC-15 — A column the entity's trash or external_id flag adds is written like a declared one
+    #[Group('spec:data-client:AC-15')]
+    #[Group('spec:data-client')]
+    public function testPutsIntoTheTrashAndRestoresAnEntityThatOnlySetsTheFlag(): void
+    {
+        [$db, , $app, $o, $c] = self::buildFlagOnly([
+            'organizations' => [['id' => 'o1', 'name' => 'Contoso']],
+            'contacts' => [['id' => 'c1', 'organization_id' => 'o1', 'email' => 'a@contoso.test']],
+        ]);
+
+        $res = FakeContext::call($app, 'DELETE', '/organizations/o1', ['headers' => self::JULIA]);
+        $this->assertSame(200, $res['status'], $res['raw']);
+        $this->assertTrue($res['data']['trashed']);
+        $this->assertSame(['contacts' => 1], $res['data']['took']);
+        $org = $db->get($o, 'o1');
+        $this->assertSame('julia.koch@example.com', $org['deleted_by']);
+        $this->assertSame('301155668849', $org['deleted_by_id']);
+        $this->assertSame($res['data']['batch'], $org['trash_batch']);
+        $this->assertNotNull($org['deleted_at']);
+        $this->assertSame($res['data']['batch'], $db->get($c, 'c1')['trash_batch']);
+
+        $res = FakeContext::call($app, 'POST', '/organizations/o1/restore', ['headers' => self::JULIA]);
+        $this->assertSame(200, $res['status'], $res['raw']);
+        $this->assertTrue($res['data']['restored']);
+        $org = $db->get($o, 'o1');
+        $this->assertNull($org['deleted_at']);
+        $this->assertNull($org['trash_batch']);
+        $this->assertNull($org['purge_blocked_reason']);
+        $this->assertNull($db->get($c, 'c1')['deleted_at']);
+    }
+
+    // data-client AC-15 — A column the entity's trash or external_id flag adds is written like a declared one
+    #[Group('spec:data-client:AC-15')]
+    #[Group('spec:data-client')]
+    public function testPurgesAnEntityThatOnlySetsTheFlagAndWritesTheBlockersReason(): void
+    {
+        [$db, $trash, , $o] = self::buildFlagOnly([
+            'organizations' => [
+                ['id' => 'old', 'name' => 'Old', 'deleted_at' => self::daysAgo(31), 'trash_batch' => 'aaaaaaaa-0000-0000-0000-000000000001'],
+                ['id' => 'held', 'name' => 'Held', 'deleted_at' => self::daysAgo(40), 'trash_batch' => 'aaaaaaaa-0000-0000-0000-000000000002'],
+            ],
+            'contacts' => [],
+        ], [
+            'blockers' => static fn (array $org): ?array => $org['id'] === 'held' ? ['reason' => '1 open quote', 'count' => 1] : null,
+            'retention' => ['transport' => self::auditSettings(['status' => 200, 'body' => ['trash_retention_days' => 30, 'defaults' => false]]), 'endpoint' => 'https://api.test', 'env' => []],
+        ]);
+
+        $result = $trash->purge(['x-revenexx-tenant' => 'acme']);
+
+        $this->assertFalse($result['skipped']);
+        $this->assertSame(['old'], $result['purged']);
+        $this->assertNull($db->get($o, 'old'));
+        $this->assertSame('1 open quote', $db->get($o, 'held')['purge_blocked_reason']);
+    }
 }

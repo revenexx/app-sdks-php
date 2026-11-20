@@ -238,6 +238,13 @@ a `400`, never silently ignored:
 | a value carrying an operator, e.g. `?sku=in.(a,b)` | `unsupported_filter_operator` |
 | a filter on a JSON column that is not a whole JSON document | `invalid_value` |
 
+The columns the entity's `trash` / `external_id` flags add filter the list like a
+declared column, whether or not `columns` names them; a key you claim in
+`queryParams` stays yours. On a `trash: true` entity, `POST` / `PUT` refuse a body
+that sets a trash column (`null` included) with `400 read_only_field`, naming them in
+`details['fields']` — only `Trash::mount` writes them. `external_id` is written like
+any column.
+
 ### The trash in one call
 
 An entity with `trash: true` in `schema.json` gets the routes a trash needs from
@@ -305,7 +312,10 @@ The data client raises `HttpError`s itself:
 |---|---|---|
 | an operation the manifest does not grant | 403 | `not_permitted` |
 | an update with nothing to update | 400 | `empty_update` |
+| a create with nothing to create (`[]`) | 400 | `empty_create` |
 | `updateIf` without a condition | 400 | `empty_condition` |
+| a write naming a key that is not a column of the entity | 400 | `unknown_field` |
+| a write that is a list instead of one record | 400 | `bad_request` |
 | an update whose row is gone | 404 | `not_found` |
 | a duplicate value | 409 | `unique_violation` |
 | a referenced record that does not exist | 400 | `foreign_key_violation` |

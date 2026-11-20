@@ -25,6 +25,10 @@ use Revenexx\AppSdk\HttpError;
  * Options: `path` (required), `columns` (default: the entity's), `queryParams`,
  * `parent` (`param`, `column`, optional `entity` to 404 an unknown parent),
  * `idParam` (default `id`), `defaultLimit` (50), `maxLimit` (200), `only`.
+ * The columns the entity's `trash` / `external_id` flags add are list filters
+ * as well, whether or not `columns` names them, unless `queryParams` claims the
+ * key. On a `trash: true` entity `POST` / `PUT` refuse a body that sets a trash
+ * column (`400 read_only_field`): only the trash routes write them.
  */
 final class Crud
 {
@@ -43,19 +47,26 @@ final class Crud
         $defaultLimit = (int) ($options['defaultLimit'] ?? 50);
         $maxLimit = (int) ($options['maxLimit'] ?? 200);
         $columns = $options['columns'] ?? $entity->columns;
+        // The columns the entity's trash / external_id flags add filter like a
+        // declared one, so a list accepts every column a write may name.
+        $flagColumns = $entity->flagColumns();
         $parent = $options['parent'] ?? null;
 
         if (\in_array('list', $enabled, true)) {
-            $app->get($base, static function (RouteContext $c) use ($client, $entity, $options, $columns, $parent, $defaultLimit, $maxLimit): mixed {
+            $app->get($base, static function (RouteContext $c) use ($client, $entity, $options, $columns, $flagColumns, $parent, $defaultLimit, $maxLimit): mixed {
                 // Refuse before any round trip — including the parent lookup.
-                self::assertKnownKeys($c->query, $columns, $options['queryParams'] ?? []);
+                self::assertKnownKeys($c->query, $columns, $flagColumns, $options['queryParams'] ?? []);
                 $where = [];
                 foreach ($c->query as $k => $v) {
-                    if (! \array_key_exists($k, $columns)) {
+                    $declared = \array_key_exists($k, $columns);
+                    // A flag column the App claims in queryParams is the App's key.
+                    $flagged = ! $declared && ! \in_array((string) $k, $options['queryParams'] ?? [], true)
+                        && \in_array((string) $k, $flagColumns, true);
+                    if (! $declared && ! $flagged) {
                         continue; // reserved and App-declared keys are not filters
                     }
                     self::assertNoOperator((string) $k, $v);
-                    if (self::isJsonColumn($columns[$k])) {
+                    if ($declared && self::isJsonColumn($columns[$k])) {
                         self::assertJsonFilter((string) $k, $v);
                     }
                     $where[$k] = $v;
@@ -88,6 +99,12 @@ final class Crud
 
         if (\in_array('create', $enabled, true)) {
             $app->post($base, static function (RouteContext $c) use ($client, $entity, $parent): mixed {
+                // A list is not one record; merged with the parent it would
+                // arrive as keys 0, 1, … Refused as itself, before the lookup.
+                if (Entity::isList($c->body)) {
+                    throw Entity::oneRecordRefusal();
+                }
+                $entity->assertNoTrashFields($c->body);
                 self::assertParentExists($c, $client, $parent);
 
                 return $c->json($client->create($entity, [...$c->body, ...self::parentWhere($c, $parent)]), 201);
@@ -102,6 +119,10 @@ final class Crud
 
         if (\in_array('update', $enabled, true)) {
             $app->put($idTemplate, static function (RouteContext $c) use ($client, $entity, $parent, $idParam): mixed {
+                if (Entity::isList($c->body)) {
+                    throw Entity::oneRecordRefusal();
+                }
+                $entity->assertNoTrashFields($c->body);
                 [$id] = self::fetchOwned($c, $client, $entity, $parent, $idParam);
                 if ($c->body === []) {
                     throw HttpError::badRequest(Client::EMPTY_UPDATE_MESSAGE, null, 'empty_update');
@@ -127,18 +148,20 @@ final class Crud
     /**
      * @param array<string, string> $query
      * @param array<string, mixed>  $columns
+     * @param list<string>          $flagColumns
      * @param list<string>          $extra
      */
-    private static function assertKnownKeys(array $query, array $columns, array $extra): void
+    private static function assertKnownKeys(array $query, array $columns, array $flagColumns, array $extra): void
     {
         $known = static fn (string $k): bool => \array_key_exists($k, $columns)
+            || \in_array($k, $flagColumns, true)
             || \in_array($k, self::RESERVED_LIST_QUERY_KEYS, true)
             || \in_array($k, $extra, true);
         $unknown = array_values(array_filter(array_map('strval', array_keys($query)), static fn (string $k): bool => ! $known($k)));
         if ($unknown === []) {
             return;
         }
-        $allowed = array_values(array_unique([...array_map('strval', array_keys($columns)), ...self::RESERVED_LIST_QUERY_KEYS, ...$extra]));
+        $allowed = array_values(array_unique([...array_map('strval', array_keys($columns)), ...$flagColumns, ...self::RESERVED_LIST_QUERY_KEYS, ...$extra]));
         sort($allowed);
         $quoted = implode(', ', array_map(static fn (string $k): string => "'{$k}'", $unknown));
 

@@ -105,7 +105,7 @@ final class DataPlaneTest extends TestCase
     public function testAMissingValueOrAFailedCheckIsA400(): void
     {
         $e = self::channels();
-        $this->assertSame([400, 'not_null_violation'], [($a = self::caught(static fn () => self::db(self::NOT_NULL)->create($e, [])))->status, $a->errorCode]);
+        $this->assertSame([400, 'not_null_violation'], [($a = self::caught(static fn () => self::db(self::NOT_NULL)->create($e, ['code' => null])))->status, $a->errorCode]);
         $this->assertSame([400, 'check_violation'], [($b = self::caught(static fn () => self::db(self::CHECK)->create($e, ['code' => 'bogus'])))->status, $b->errorCode]);
     }
 

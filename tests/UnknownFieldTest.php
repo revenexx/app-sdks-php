@@ -162,4 +162,104 @@ final class UnknownFieldTest extends TestCase
         $this->assertSame(self::SEED['accounts'], $db->list($e));
         $this->assertSame(200, FakeContext::call($app, 'PUT', '/accounts/a1', ['body' => ['name' => 'Neu', 'settings' => ['x' => 1]]])['status']);
     }
+
+    // data-client AC-15 — A column the entity's trash or external_id flag adds is written like a declared one
+    #[Group('spec:data-client:AC-15')]
+    #[Group('spec:data-client')]
+    public function testTheColumnsAFlagAddsAreWrittenAndRefusedWithoutTheFlag(): void
+    {
+        $columns = ['id' => ['type' => 'text', 'pk' => true], 'title' => ['type' => 'text']];
+        $ops = ['list', 'get', 'create', 'update'];
+        $notes = new Entity('notes', 't_notes', 'id', $columns, $ops, trash: true, externalId: true);
+        $plain = new Entity('plain', 't_plain', 'id', $columns, $ops);
+
+        $sent = [];
+        $remote = new RemoteAdapter('http://pgrst:3000', transport: static function (string $m, string $u, array $h, ?string $body) use (&$sent): array {
+            $sent[] = json_decode((string) $body, true);
+
+            return ['status' => 200, 'body' => (string) json_encode([['id' => 'n1']])];
+        });
+        $db = new Client($remote, ['notes' => $notes, 'plain' => $plain]);
+        $db->create($notes, ['id' => 'n2', 'external_id' => 'ERP-2']);
+        $db->update($notes, 'n1', ['deleted_at' => '2026-01-01T00:00:00Z', 'trash_batch' => 'b1', 'purge_blocked_reason' => null]);
+        $this->assertSame([
+            ['id' => 'n2', 'external_id' => 'ERP-2'],
+            ['deleted_at' => '2026-01-01T00:00:00Z', 'trash_batch' => 'b1', 'purge_blocked_reason' => null],
+        ], $sent);
+
+        try {
+            $db->create($plain, ['id' => 'p1', 'external_id' => 'ERP-1', 'deleted_at' => null]);
+            $this->fail('expected unknown_field');
+        } catch (HttpError $e) {
+            $this->assertSame('unknown_field', $e->errorCode);
+            $this->assertSame(['unknown' => ['deleted_at', 'external_id'], 'allowed' => ['id', 'title']], $e->details);
+        }
+
+        try {
+            $db->create($notes, ['id' => 'n3', 'frame_ancestors' => '*']);
+            $this->fail('expected unknown_field');
+        } catch (HttpError $e) {
+            $this->assertSame(
+                ['deleted_at', 'deleted_by', 'deleted_by_id', 'external_id', 'id', 'purge_blocked_reason', 'title', 'trash_batch'],
+                $e->details['allowed'],
+            );
+        }
+        $this->assertCount(2, $sent);
+
+        // The mock reads by them too, as the data plane does.
+        $mock = new Client(AdapterRegistry::create('mock', ['seed' => ['notes' => [['id' => 'n1', 'title' => 'One']]]]), ['notes' => $notes]);
+        $mock->update($notes, 'n1', ['external_id' => 'ERP-1']);
+        $this->assertCount(1, $mock->list($notes, ['where' => ['external_id' => 'ERP-1', 'deleted_at' => null]]));
+    }
+
+    private const ONE_RECORD = 'a write takes one record, as a JSON object — not a list';
+
+    // data-client AC-16 — A write is one record, never a list
+    // The cases both runtimes answer — client, remote, mounted route and a
+    // hand-written handler — are in fixtures/parity.json (`writes`). What stays
+    // here is the adapter used without the client.
+    #[Group('spec:data-client:AC-16')]
+    #[Group('spec:data-client')]
+    public function testTheAdaptersRefuseAListWhenUsedWithoutTheClient(): void
+    {
+        $list = [['name' => 'New', 'evil' => 1]];
+        $sent = [];
+        $e = self::accounts();
+        foreach ([AdapterRegistry::create('mock', ['seed' => self::SEED]), self::remote($sent)] as $adapter) {
+            foreach ([
+                static fn () => $adapter->create($e, $list),
+                static fn () => $adapter->update($e, 'a1', $list),
+            ] as $write) {
+                $err = self::refusal($write);
+                $this->assertSame([400, 'bad_request', self::ONE_RECORD, null], [$err->status, $err->errorCode, $err->getMessage(), $err->details]);
+            }
+        }
+        $this->assertSame([], $sent);
+    }
+
+    // mock-fidelity AC-2 — A condition on an undeclared column fails like PostgREST
+    #[Group('spec:mock-fidelity:AC-2')]
+    #[Group('spec:mock-fidelity')]
+    public function testTheMockFiltersOnTheColumnsAFlagAddsAndRefusesThemWithoutTheFlag(): void
+    {
+        $columns = ['id' => ['type' => 'text', 'pk' => true], 'title' => ['type' => 'text']];
+        $ops = ['list', 'get', 'create', 'update'];
+        $notes = new Entity('notes', 't_notes', 'id', $columns, $ops, trash: true, externalId: true);
+        $plain = new Entity('plain', 't_plain', 'id', $columns, $ops);
+        $rows = [['id' => 'n1', 'title' => 'One', 'external_id' => 'ERP-1']];
+        $db = new Client(AdapterRegistry::create('mock', ['seed' => ['notes' => $rows, 'plain' => $rows]]), ['notes' => $notes, 'plain' => $plain]);
+
+        $this->assertCount(1, $db->list($notes, ['where' => ['external_id' => 'ERP-1', 'deleted_at' => null]]));
+        $this->assertSame(0, $db->page($notes, ['where' => ['trash_batch' => 'b1']])['total']);
+        $this->assertSame('Eins', $db->updateIf($notes, 'n1', ['external_id' => 'ERP-1'], ['title' => 'Eins'])['title'] ?? null);
+
+        foreach ([
+            static fn () => $db->list($plain, ['where' => ['external_id' => 'ERP-1']]),
+            static fn () => $db->page($plain, ['where' => ['deleted_at' => null]]),
+            static fn () => $db->updateIf($plain, 'n1', ['external_id' => 'ERP-1'], ['title' => 'Eins']),
+        ] as $read) {
+            $err = self::refusal($read);
+            $this->assertSame([400, 'bad_request'], [$err->status, $err->errorCode]);
+        }
+    }
 }

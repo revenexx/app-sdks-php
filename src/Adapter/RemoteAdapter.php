@@ -107,6 +107,8 @@ final class RemoteAdapter implements Adapter, CountsRows, EmitsEvents, UpdatesCo
         // Checked here as well as in the Client, so the adapter used on its own
         // refuses the same keys (Entity::unknownFields).
         $entity->assertKnownFields($data);
+        // `[]` would be a bulk insert of no rows (500 empty_representation).
+        Entity::assertCreatable($data);
         $rows = $this->request('POST', "/{$entity->table}", $data, 'return=representation', $entity->table);
 
         // An insert that reports success but returns no row is not readable back

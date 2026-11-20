@@ -5,14 +5,50 @@ All notable changes to `revenexx/app-sdk` are listed here. The package follows
 
 ## Unreleased
 
-- **A write names only the columns the App declares.** `create`, `update` and
+The next release is **2.0.0**: the first entry narrows every write, and a narrowing
+is a major (`docs/versioning.md`). A `Crud::mount` route or a mock-backed test that
+wrote a key the entity does not declare starts failing with it.
+
+2.0.0 is also the first release of what was listed here as 1.2.0 — the trash, its
+purge, `GatewayCounter` and the two audit headers. That version was never tagged, so
+an App on `^1.1` has none of it; the entries are below, after the 2.0.0 changes.
+
+- **Breaking — a write names only the columns the App declares.** `create`, `update` and
   `updateIf` — and therefore `POST` / `PUT` on a `Crud::mount` collection — refuse a
-  key that is not in the entity's `columns` with `400 unknown_field`, naming every
-  such key in `details['unknown']` (and the entity's columns in `details['allowed']`),
+  key that is not a column of the entity with `400 unknown_field`, naming every such
+  key in `details['unknown']` (and the writable columns in `details['allowed']`),
   before any request. Refused, never dropped. Any document inside a `jsonb` column,
   `tenant_id`, the system columns the schema declares and entities without column
-  metadata are unchanged. The mock and remote adapters refuse the same keys when used
-  directly. Same as the JavaScript SDK (`data-client` AC-13, AC-14).
+  metadata are unchanged. The columns `trash: true` and `external_id: true` add are
+  writable whenever the entity carries the flag (`new Entity(..., trash: true,
+  externalId: true)`), declared or not. The mock and remote adapters refuse the same
+  keys when used directly. Same as the JavaScript SDK (`data-client` AC-13 to AC-15).
+- **Breaking — a write is one record.** `create`, `update` and `updateIf` on an entity
+  with column metadata, and `POST` / `PUT` on a `Crud::mount` collection, refuse a list
+  — a non-empty array keyed exactly `0` … `n-1`, which is what both `[…]` and
+  `{"0":…}` decode to — with `400 bad_request` and the message `a write takes one
+  record, as a JSON object — not a list`, before any request. `[]` stays an empty
+  record.
+- **A create with no field is refused.** `create($entity, [])` (also what `{}` decodes
+  to), and `POST []` / `POST {}` on a `Crud::mount` collection, answer `400
+  empty_create` (`request body must contain at least one field to create`) on the mock
+  and the remote adapter alike, before any request. The remote adapter used to send
+  `[]`, which PostgREST read as a bulk insert of no rows, and answered `500
+  empty_representation`; the mock stored a row of defaults (`data-client` AC-17). A list used to reach the mounted routes as keys `0`, `1`, … and fail as
+  `unknown_field`; a handler that passed `$c->body` on was the same. Same as the
+  JavaScript SDK (`data-client` AC-16).
+- **A mounted list filters on the columns the entity's flags add.** `Crud::mount`
+  accepts the trash columns (`trash: true`) and `external_id` (`external_id: true`) as
+  list filters whether or not `columns` names them, and names them in
+  `details['allowed']` of an `unknown_filter`, so a list accepts every column a write
+  may name (`list-filters` AC-9). A key the App claims in `queryParams` stays the
+  App's key.
+- **Breaking — a mounted trash entity does not take the trash columns in a body.** On
+  an entity with `trash: true`, `POST` / `PUT` of `Crud::mount` refuse a body that sets
+  `deleted_at`, `deleted_by`, `deleted_by_id`, `trash_batch` or `purge_blocked_reason`
+  (declared or not, `null` included) with `400 read_only_field`, naming them in
+  `details['fields']`. Only `Trash::mount` writes them, through the client.
+  `external_id` stays writable (`crud-routes` AC-11).
 - **A value list in `where` keeps each value whole.** `['col' => [a, b]]` and
   `['op' => 'in', 'value' => [a, b]]` send every value double-quoted, with `"` and
   `\` inside it escaped, the way PostgREST reads a list. A value with a comma used
@@ -28,17 +64,17 @@ All notable changes to `revenexx/app-sdk` are listed here. The package follows
   to AC-11).
 - **`$settings->set($c, $values, ifAbsent: true)`** and **`$c->setSettings($values, true)`**
   store the App's own tenant-level settings through the gateway
-  (`PATCH /v1/settings/apps/{app}`, PE-1174), forwarding the platform's
+  (`PATCH /v1/settings/apps/{app}`), forwarding the platform's
   `x-revenexx-app-context`. Never throws: `['ok' => false, …]` on a refusal, an
   unreachable gateway, or a request without an app context (event/schedule runs). A
   write that stored something drops the tenant's cached reads. `writeTransport` is the
   test seam.
 - **`stored`** on `load()` names the keys the tenant stored rather than defaulted.
 
-## 1.2.0
+Listed as 1.2.0 before, never tagged, released with 2.0.0:
 
 - **`Trash::mount` gives an entity with `trash: true` its trash in one call**, the same
-  as `mountTrash` in the JavaScript SDK (PE-1022). `DELETE <path>/{id}` puts a live row
+  as `mountTrash` in the JavaScript SDK. `DELETE <path>/{id}` puts a live row
   into the trash with its live children as one group and deletes a trashed row for
   good; `POST <path>/{id}/restore` brings the group back. `guard` refuses the trash
   (`409 trash_blocked`), `blockers` refuse the final delete (`409 delete_blocked`),
@@ -52,7 +88,7 @@ All notable changes to `revenexx/app-sdk` are listed here. The package follows
 - **`GatewayCounter`** counts another App's records through the gateway for a cross-app
   blocker. A count it cannot get is an `unverifiable` blocker.
 - **The `runtime` adapter forwards the request's `X-Revenexx-Audit`** to the data plane
-  unchanged with every request, like `X-Revenexx-Market` (PE-1039). Baseline uses it to
+  unchanged with every request, like `X-Revenexx-Market`. Baseline uses it to
   name the person behind a call in the record history; the SDK never reads it. Without
   one, or with a value that is not one line of visible ASCII, no header is sent and
   nothing else changes. `RemoteAdapter` takes it as the named argument `audit:`.

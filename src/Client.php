@@ -103,6 +103,7 @@ final class Client
         // A key that is not a column this version declares is refused before
         // the request ({@see Entity::unknownFields()}).
         $entity->assertKnownFields($data);
+        Entity::assertCreatable($data);
 
         return $this->adapter->create($entity, $data);
     }

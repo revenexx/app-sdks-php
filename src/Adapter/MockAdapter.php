@@ -121,7 +121,8 @@ final class MockAdapter implements Adapter, CountsRows, EmitsEvents, RecordsEven
      * with 400 (SQLSTATE 42703), which the remote adapter maps to `400
      * bad_request`; the mock used to filter every row out and return [],
      * so a test passed against a call that fails in production. Mirrors the JavaScript SDK's
-     * mock. `tenant_id` exists on every table without being declared; an
+     * mock. `tenant_id` exists on every table without being declared, and so
+     * do the columns the entity's `trash` / `external_id` flags add; an
      * entity without column metadata is not checked.
      *
      * @param array<string, mixed> $where
@@ -133,7 +134,9 @@ final class MockAdapter implements Adapter, CountsRows, EmitsEvents, RecordsEven
         }
         $unknown = array_values(array_filter(
             array_keys($where),
-            static fn (string|int $k): bool => ! \array_key_exists($k, $entity->columns) && ! \in_array($k, Entity::IMPLICIT_COLUMNS, true),
+            static fn (string|int $k): bool => ! \array_key_exists($k, $entity->columns)
+                && ! \in_array($k, Entity::IMPLICIT_COLUMNS, true)
+                && ! \in_array((string) $k, $entity->flagColumns(), true),
         ));
         if ($unknown !== []) {
             // Same status, code and message as the remote adapter; the offending
@@ -158,6 +161,8 @@ final class MockAdapter implements Adapter, CountsRows, EmitsEvents, RecordsEven
     public function create(Entity $entity, array $data): array
     {
         $entity->assertKnownFields($data);
+        // A row of defaults from nothing is what production refuses too.
+        Entity::assertCreatable($data);
         $row = $this->applyDefaults($entity, $data);
         if (! isset($row[$entity->pk])) {
             $row[$entity->pk] = self::uuid();

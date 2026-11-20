@@ -423,7 +423,11 @@ final class ParityTest extends TestCase
     private function assertWriteRefusal(HttpError $err, array $case): void
     {
         $this->assertSame([$case['status'], $case['code']], [$err->status, $err->errorCode]);
-        $this->assertSame(['unknown' => $case['unknown'], 'allowed' => self::fixture()['writes']['allowed']], $err->details);
+        // Only an unknown field names keys; a list is refused as a whole.
+        $this->assertSame(
+            $case['code'] === 'unknown_field' ? ['unknown' => $case['unknown'], 'allowed' => self::fixture()['writes']['allowed']] : null,
+            $err->details,
+        );
         if (isset($case['message'])) {
             $this->assertSame($case['message'], $err->getMessage());
         }
@@ -431,8 +435,16 @@ final class ParityTest extends TestCase
 
     /** @param array<string, mixed> $case */
     // runtime-parity AC-9 — A write is checked against the same columns in both runtimes
+    // data-client AC-16 — A write is one record, never a list
+    // crud-routes AC-10 — A create or update naming a field the resource does not have is a 400
+    // data-client AC-17 — A create with no field is refused before any request
     #[Group('spec:runtime-parity:AC-9')]
     #[Group('spec:runtime-parity')]
+    #[Group('spec:data-client:AC-16')]
+    #[Group('spec:data-client')]
+    #[Group('spec:crud-routes:AC-10')]
+    #[Group('spec:crud-routes')]
+    #[Group('spec:data-client:AC-17')]
     #[DataProvider('writeCases')]
     public function testAWriteIsCheckedAgainstTheFixturesColumns(array $case): void
     {
@@ -482,7 +494,208 @@ final class ParityTest extends TestCase
             : FakeContext::call($app, 'PUT', "/accounts/{$case['id']}", ['body' => $case['data']]);
         $this->assertSame($case['status'], $res['status'], $res['raw']);
         if (isset($case['code'])) {
-            $this->assertSame([$case['code'], $case['unknown']], [$res['data']['code'], $res['data']['details']['unknown']]);
+            $this->assertSame($case['code'], $res['data']['code']);
+        }
+        if (isset($case['unknown'])) {
+            $this->assertSame($case['unknown'], $res['data']['details']['unknown']);
+        }
+        if (isset($case['message'])) {
+            $this->assertSame($case['message'], $res['data']['message']);
+        }
+        if ($case['status'] >= 400) {
+            // A refused write changed nothing.
+            $this->assertSame($w['rows'], $db->list($e));
+        }
+        if ($case['call'] !== 'create') {
+            return;
+        }
+
+        // A hand-written handler that creates from the body, handed the raw JSON text.
+        $db = new Client(AdapterRegistry::create('mock', ['seed' => ['accounts' => $w['rows']]]), ['accounts' => $e]);
+        $app = new App(['name' => 'accounts']);
+        $app->post('/import', static fn ($c) => $c->json($db->create($e, $c->body), 201));
+        $res = FakeContext::call($app, 'POST', '/import', ['body' => self::rawJson($case['data'])]);
+        $this->assertSame($case['status'], $res['status'], $res['raw']);
+        if (isset($case['code'])) {
+            $this->assertSame($case['code'], $res['data']['code']);
+        }
+        if (isset($case['message'])) {
+            $this->assertSame($case['message'], $res['data']['message']);
+        }
+        if ($case['status'] >= 400) {
+            $this->assertSame($w['rows'], $db->list($e));
+        }
+    }
+
+    /**
+     * The fixture's JSON for a body. PHP decoded `{"0":…}` and `[…]` alike, so
+     * the text is re-encoded; both decode back to the array the runtime sees.
+     */
+    private static function rawJson(mixed $data): string
+    {
+        return (string) json_encode($data);
+    }
+
+    /** @return iterable<string, array{array<string, mixed>}> */
+    public static function flagWriteCases(): iterable
+    {
+        if (self::fixture() === []) {
+            yield from self::absent(1);
+
+            return;
+        }
+        foreach (self::fixture()['flag_writes']['cases'] as $case) {
+            yield $case['name'] => [$case];
+        }
+    }
+
+    /** @return array<string, Entity> */
+    private static function flagEntities(): array
+    {
+        $out = [];
+        foreach (self::fixture()['flag_writes']['entities'] as $name => $e) {
+            $out[$name] = new Entity(
+                $name,
+                "t_{$name}",
+                'id',
+                $e['columns'],
+                ['list', 'get', 'create', 'update'],
+                trash: $e['trash'] ?? false,
+                externalId: $e['external_id'] ?? false,
+            );
+        }
+
+        return $out;
+    }
+
+    /** @param array<string, mixed> $case */
+    // runtime-parity AC-9 — A write is checked against the same columns in both runtimes
+    // crud-routes AC-11 — A body to a mounted trash entity cannot set the trash columns
+    #[Group('spec:runtime-parity:AC-9')]
+    #[Group('spec:runtime-parity')]
+    #[Group('spec:crud-routes:AC-11')]
+    #[Group('spec:crud-routes')]
+    #[DataProvider('flagWriteCases')]
+    public function testTheColumnsAFlagAddsAreCheckedAsTheFixtureSays(array $case): void
+    {
+        self::requireFixture();
+        $f = self::fixture()['flag_writes'];
+        $entities = self::flagEntities();
+        $e = $entities[$case['entity']];
+        $refused = function (HttpError $err) use ($case, $f): void {
+            $this->assertSame([$case['status'], $case['code']], [$err->status, $err->errorCode]);
+            $this->assertSame(['unknown' => $case['unknown'], 'allowed' => $f['entities'][$case['entity']]['allowed']], $err->details);
+            if (isset($case['message'])) {
+                $this->assertSame($case['message'], $err->getMessage());
+            }
+        };
+
+        $seed = array_map(static fn (): array => $f['rows'], $entities);
+        $db = new Client(AdapterRegistry::create('mock', ['seed' => $seed]), $entities);
+        try {
+            $row = self::writeThrough($db, $e, $case);
+            $this->assertLessThan(400, $case['status'], 'expected a refusal');
+            foreach ($case['data'] as $k => $v) {
+                $this->assertSame($v, $row[$k]);
+            }
+        } catch (HttpError $err) {
+            $refused($err);
+            $this->assertSame($f['rows'], $db->list($e));
+        }
+
+        $sent = [];
+        $remote = new RemoteAdapter('http://pgrst:3000', transport: static function (string $m, string $u, array $h, ?string $body) use (&$sent, $case): array {
+            $sent[] = json_decode((string) $body, true);
+
+            return ['status' => 200, 'body' => (string) json_encode([['id' => $case['id'] ?? 'x', ...$case['data']]])];
+        });
+        $db = new Client($remote, $entities);
+        try {
+            self::writeThrough($db, $e, $case);
+            $this->assertLessThan(400, $case['status'], 'expected a refusal');
+            $this->assertSame([$case['data']], $sent);
+        } catch (HttpError $err) {
+            $refused($err);
+            $this->assertSame([], $sent);
+        }
+
+        // The mounted collection, for the two writes it routes.
+        if ($case['call'] === 'updateIf') {
+            return;
+        }
+        $db = new Client(AdapterRegistry::create('mock', ['seed' => $seed]), $entities);
+        $app = new App(['name' => $case['entity']]);
+        Crud::mount($app, $db, $e, ['path' => "/{$case['entity']}"]);
+        $res = $case['call'] === 'create'
+            ? FakeContext::call($app, 'POST', "/{$case['entity']}", ['body' => $case['data']])
+            : FakeContext::call($app, 'PUT', "/{$case['entity']}/{$case['id']}", ['body' => $case['data']]);
+        $want = $case['route'] ?? ['status' => $case['status'], 'code' => $case['code'] ?? null];
+        $this->assertSame($want['status'], $res['status'], $res['raw']);
+        if ($want['status'] >= 400) {
+            $this->assertSame($want['code'], $res['data']['code']);
+            $this->assertSame(
+                isset($case['route']) ? ['fields' => $case['route']['fields']] : ['unknown' => $case['unknown'], 'allowed' => $f['entities'][$case['entity']]['allowed']],
+                $res['data']['details'],
+            );
+            $this->assertSame($f['rows'], $db->list($e));
+        } else {
+            foreach ($case['data'] as $k => $v) {
+                $this->assertSame($v, $res['data'][$k]);
+            }
+        }
+    }
+
+    /** @return iterable<string, array{array<string, mixed>}> */
+    public static function flagFilterCases(): iterable
+    {
+        if (self::fixture() === []) {
+            yield from self::absent(1);
+
+            return;
+        }
+        foreach (self::fixture()['flag_writes']['filters'] as $case) {
+            yield $case['name'] => [$case];
+        }
+    }
+
+    /** @param array<string, mixed> $case */
+    // runtime-parity AC-5 — A mounted list answers the same querystring the same way in both runtimes
+    // list-filters AC-9 — A column the entity's trash or external_id flag adds filters a list like a declared one
+    #[Group('spec:runtime-parity:AC-5')]
+    #[Group('spec:runtime-parity')]
+    #[Group('spec:list-filters:AC-9')]
+    #[Group('spec:list-filters')]
+    #[DataProvider('flagFilterCases')]
+    public function testAColumnAFlagAddsFiltersAMountedListAsTheFixtureSays(array $case): void
+    {
+        self::requireFixture();
+        $f = self::fixture()['flag_writes'];
+        $entities = self::flagEntities();
+        $e = $entities[$case['entity']];
+        $db = new Client(AdapterRegistry::create('mock', ['seed' => [$case['entity'] => $f['filter_rows']]]), $entities);
+        $app = new App(['name' => $case['entity']]);
+        Crud::mount($app, $db, $e, array_filter([
+            'path' => "/{$case['entity']}",
+            'columns' => $case['columns'] ?? null,
+            'queryParams' => $case['queryParams'] ?? null,
+        ], static fn (mixed $v): bool => $v !== null));
+        $res = FakeContext::call($app, 'GET', "/{$case['entity']}", ['query' => $case['query']]);
+
+        $this->assertSame($case['status'], $res['status'], $res['raw']);
+        if (isset($case['code'])) {
+            $this->assertSame($case['code'], $res['data']['code']);
+        }
+        if (isset($case['total'])) {
+            $this->assertSame($case['total'], $res['data']['page']['total']);
+        }
+        if (isset($case['filter'])) {
+            $this->assertSame($case['filter'], $res['data']['filter']);
+        }
+        if (isset($case['unknown'])) {
+            $this->assertSame($case['unknown'], $res['data']['details']['unknown']);
+        }
+        if (isset($case['allowed'])) {
+            $this->assertSame($case['allowed'], $res['data']['details']['allowed']);
         }
     }
 }
