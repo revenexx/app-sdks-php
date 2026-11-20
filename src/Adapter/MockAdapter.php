@@ -133,7 +133,7 @@ final class MockAdapter implements Adapter, CountsRows, EmitsEvents, RecordsEven
         }
         $unknown = array_values(array_filter(
             array_keys($where),
-            static fn (string|int $k): bool => ! \array_key_exists($k, $entity->columns) && $k !== 'tenant_id',
+            static fn (string|int $k): bool => ! \array_key_exists($k, $entity->columns) && ! \in_array($k, Entity::IMPLICIT_COLUMNS, true),
         ));
         if ($unknown !== []) {
             // Same status, code and message as the remote adapter; the offending
@@ -151,8 +151,13 @@ final class MockAdapter implements Adapter, CountsRows, EmitsEvents, RecordsEven
         return $this->table($entity)[$id] ?? null;
     }
 
+    /**
+     * A key that is not a declared column is the same 400 `unknown_field` the
+     * remote adapter raises, so a test cannot pass on a write production refuses.
+     */
     public function create(Entity $entity, array $data): array
     {
+        $entity->assertKnownFields($data);
         $row = $this->applyDefaults($entity, $data);
         if (! isset($row[$entity->pk])) {
             $row[$entity->pk] = self::uuid();
@@ -164,6 +169,7 @@ final class MockAdapter implements Adapter, CountsRows, EmitsEvents, RecordsEven
 
     public function update(Entity $entity, int|string $id, array $patch): array
     {
+        $entity->assertKnownFields($patch);
         $cur = $this->table($entity)[$id] ?? null;
         if ($cur === null) {
             throw HttpError::notFound("mock: {$entity->name}/{$id} not found");
@@ -179,6 +185,7 @@ final class MockAdapter implements Adapter, CountsRows, EmitsEvents, RecordsEven
     public function updateIf(Entity $entity, int|string $id, array $where, array $patch): ?array
     {
         self::assertWhereColumns($entity, $where);
+        $entity->assertKnownFields($patch);
         $cur = $this->table($entity)[$id] ?? null;
         if ($cur === null || ! Query::matches($cur, $where)) {
             return null;

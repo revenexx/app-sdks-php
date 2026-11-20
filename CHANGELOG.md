@@ -5,6 +5,14 @@ All notable changes to `revenexx/app-sdk` are listed here. The package follows
 
 ## Unreleased
 
+- **A write names only the columns the App declares.** `create`, `update` and
+  `updateIf` — and therefore `POST` / `PUT` on a `Crud::mount` collection — refuse a
+  key that is not in the entity's `columns` with `400 unknown_field`, naming every
+  such key in `details['unknown']` (and the entity's columns in `details['allowed']`),
+  before any request. Refused, never dropped. Any document inside a `jsonb` column,
+  `tenant_id`, the system columns the schema declares and entities without column
+  metadata are unchanged. The mock and remote adapters refuse the same keys when used
+  directly. Same as the JavaScript SDK (`data-client` AC-13, AC-14).
 - **A value list in `where` keeps each value whole.** `['col' => [a, b]]` and
   `['op' => 'in', 'value' => [a, b]]` send every value double-quoted, with `"` and
   `\` inside it escaped, the way PostgREST reads a list. A value with a comma used

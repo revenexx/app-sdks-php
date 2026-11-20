@@ -216,7 +216,7 @@ final class ParityTest extends TestCase
         $adapter = new RemoteAdapter('http://pgrst:3000', transport: static fn (): array => ['status' => $case['status'], 'body' => $case['body']]);
         $db = new Client($adapter, [$e->name => $e]);
         $run = match ($case['call']) {
-            'create' => static fn () => $db->create($e, ['code' => 'x']),
+            'create' => static fn () => $db->create($e, ['name' => 'x']),
             'delete' => static fn () => $db->remove($e, '1'),
             'get' => static fn () => $db->get($e, '1'),
             default => static fn () => $db->list($e),
@@ -391,5 +391,98 @@ final class ParityTest extends TestCase
             'details' => $r->details,
             'app' => $r->app,
         ]);
+    }
+
+    /** @return iterable<string, array{array<string, mixed>}> */
+    public static function writeCases(): iterable
+    {
+        if (self::fixture() === []) {
+            yield from self::absent(1);
+
+            return;
+        }
+        foreach (self::fixture()['writes']['cases'] as $case) {
+            yield $case['name'] => [$case];
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $case
+     * @return array<string, mixed>|null
+     */
+    private static function writeThrough(Client $db, Entity $e, array $case): ?array
+    {
+        return match ($case['call']) {
+            'create' => $db->create($e, $case['data']),
+            'update' => $db->update($e, $case['id'], $case['data']),
+            default => $db->updateIf($e, $case['id'], $case['where'], $case['data']),
+        };
+    }
+
+    /** @param array<string, mixed> $case */
+    private function assertWriteRefusal(HttpError $err, array $case): void
+    {
+        $this->assertSame([$case['status'], $case['code']], [$err->status, $err->errorCode]);
+        $this->assertSame(['unknown' => $case['unknown'], 'allowed' => self::fixture()['writes']['allowed']], $err->details);
+        if (isset($case['message'])) {
+            $this->assertSame($case['message'], $err->getMessage());
+        }
+    }
+
+    /** @param array<string, mixed> $case */
+    // runtime-parity AC-9 — A write is checked against the same columns in both runtimes
+    #[Group('spec:runtime-parity:AC-9')]
+    #[Group('spec:runtime-parity')]
+    #[DataProvider('writeCases')]
+    public function testAWriteIsCheckedAgainstTheFixturesColumns(array $case): void
+    {
+        self::requireFixture();
+        $w = self::fixture()['writes'];
+        $e = new Entity('accounts', 't_accounts', 'id', $w['columns'], ['list', 'get', 'create', 'update']);
+
+        // The client on the mock: refused writes change nothing.
+        $db = new Client(AdapterRegistry::create('mock', ['seed' => ['accounts' => $w['rows']]]), ['accounts' => $e]);
+        try {
+            $row = self::writeThrough($db, $e, $case);
+            $this->assertLessThan(400, $case['status'], 'expected a refusal');
+            foreach ($case['data'] as $k => $v) {
+                $this->assertSame($v, $row[$k]);
+            }
+        } catch (HttpError $err) {
+            $this->assertWriteRefusal($err, $case);
+            $this->assertSame($w['rows'], $db->list($e));
+        }
+
+        // The remote adapter: a refused write sends no request.
+        $sent = [];
+        $remote = new RemoteAdapter('http://pgrst:3000', transport: static function (string $m, string $u, array $h, ?string $body) use (&$sent, $case): array {
+            $sent[] = json_decode((string) $body, true);
+
+            return ['status' => 200, 'body' => (string) json_encode([['id' => $case['id'] ?? 'x', ...$case['data']]])];
+        });
+        $db = new Client($remote, ['accounts' => $e]);
+        try {
+            self::writeThrough($db, $e, $case);
+            $this->assertLessThan(400, $case['status'], 'expected a refusal');
+            $this->assertSame([$case['data']], $sent);
+        } catch (HttpError $err) {
+            $this->assertWriteRefusal($err, $case);
+            $this->assertSame([], $sent);
+        }
+
+        // The mounted collection, for the two writes it routes.
+        if ($case['call'] === 'updateIf') {
+            return;
+        }
+        $db = new Client(AdapterRegistry::create('mock', ['seed' => ['accounts' => $w['rows']]]), ['accounts' => $e]);
+        $app = new App(['name' => 'accounts']);
+        Crud::mount($app, $db, $e, ['path' => '/accounts']);
+        $res = $case['call'] === 'create'
+            ? FakeContext::call($app, 'POST', '/accounts', ['body' => $case['data']])
+            : FakeContext::call($app, 'PUT', "/accounts/{$case['id']}", ['body' => $case['data']]);
+        $this->assertSame($case['status'], $res['status'], $res['raw']);
+        if (isset($case['code'])) {
+            $this->assertSame([$case['code'], $case['unknown']], [$res['data']['code'], $res['data']['details']['unknown']]);
+        }
     }
 }

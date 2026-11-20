@@ -100,6 +100,9 @@ final class Client
     public function create(Entity $entity, array $data): array
     {
         $this->guard($entity, 'create');
+        // A key that is not a column this version declares is refused before
+        // the request ({@see Entity::unknownFields()}).
+        $entity->assertKnownFields($data);
 
         return $this->adapter->create($entity, $data);
     }
@@ -119,6 +122,7 @@ final class Client
         if ($patch === []) {
             throw HttpError::badRequest(self::EMPTY_UPDATE_MESSAGE, null, 'empty_update');
         }
+        $entity->assertKnownFields($patch);
 
         return $this->adapter->update($entity, $id, $patch);
     }
@@ -147,6 +151,7 @@ final class Client
         if ($patch === []) {
             throw HttpError::badRequest(self::EMPTY_UPDATE_MESSAGE, null, 'empty_update');
         }
+        $entity->assertKnownFields($patch);
         if (! $this->adapter instanceof UpdatesConditionally) {
             throw new \RuntimeException(
                 "{$entity->name}.updateIf() is not supported by the '{$this->adapter->kind()}' adapter",

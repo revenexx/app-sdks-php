@@ -104,6 +104,9 @@ final class RemoteAdapter implements Adapter, CountsRows, EmitsEvents, UpdatesCo
 
     public function create(Entity $entity, array $data): array
     {
+        // Checked here as well as in the Client, so the adapter used on its own
+        // refuses the same keys (Entity::unknownFields).
+        $entity->assertKnownFields($data);
         $rows = $this->request('POST', "/{$entity->table}", $data, 'return=representation', $entity->table);
 
         // An insert that reports success but returns no row is not readable back
@@ -114,6 +117,7 @@ final class RemoteAdapter implements Adapter, CountsRows, EmitsEvents, UpdatesCo
 
     public function update(Entity $entity, int|string $id, array $patch): array
     {
+        $entity->assertKnownFields($patch);
         $rows = $this->request(
             'PATCH',
             "/{$entity->table}?{$entity->pk}=eq." . rawurlencode((string) $id),
@@ -136,6 +140,7 @@ final class RemoteAdapter implements Adapter, CountsRows, EmitsEvents, UpdatesCo
      */
     public function updateIf(Entity $entity, int|string $id, array $where, array $patch): ?array
     {
+        $entity->assertKnownFields($patch);
         $rows = $this->request(
             'PATCH',
             "/{$entity->table}?{$entity->pk}=eq." . rawurlencode((string) $id) . '&' . Query::toParams(['where' => $where]),
