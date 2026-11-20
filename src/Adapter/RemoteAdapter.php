@@ -12,6 +12,7 @@ use Revenexx\AppSdk\Entity;
 use Revenexx\AppSdk\HttpError;
 use Revenexx\AppSdk\PostgrestError;
 use Revenexx\AppSdk\Query;
+use Revenexx\AppSdk\CreatesMany;
 use Revenexx\AppSdk\UpdatesConditionally;
 
 /**
@@ -29,7 +30,7 @@ use Revenexx\AppSdk\UpdatesConditionally;
  *
  * @phpstan-type Transport callable(string, string, array<int, string>, ?string): array{status: int, body: string, headers?: array<string, string>}
  */
-final class RemoteAdapter implements Adapter, CountsRows, EmitsEvents, UpdatesConditionally
+final class RemoteAdapter implements Adapter, CountsRows, CreatesMany, EmitsEvents, UpdatesConditionally
 {
     /** @var callable(string, string, array<int, string>, ?string): array{status: int, body: string, headers?: array<string, string>} */
     private $transport;
@@ -115,6 +116,22 @@ final class RemoteAdapter implements Adapter, CountsRows, EmitsEvents, UpdatesCo
         // (an RLS policy that permits INSERT but not SELECT): a described 5xx.
         return $this->oneRow($rows)
             ?? throw new HttpError(500, 'the record was created but could not be read back', null, 'empty_representation');
+    }
+
+    /**
+     * One POST of the whole list: PostgREST inserts it in one statement and
+     * answers every row, in order. Checked here as well as in the Client.
+     */
+    public function createMany(Entity $entity, array $rows): array
+    {
+        $records = $entity->bulkRecords($rows);
+        $answer = $this->request('POST', "/{$entity->table}", $records, 'return=representation', $entity->table);
+        // Fewer rows than records: some are not readable back (RLS) — a 5xx.
+        if ($answer === null || ! array_is_list($answer) || \count($answer) < \count($records)) {
+            throw new HttpError(500, 'the records were created but could not be read back', null, 'empty_representation');
+        }
+
+        return $answer;
     }
 
     public function update(Entity $entity, int|string $id, array $patch): array

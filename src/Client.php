@@ -109,6 +109,27 @@ final class Client
     }
 
     /**
+     * Bulk create: a non-empty list of records naming the same fields, inserted
+     * in one request ({@see Entity::bulkRecords()} checks every record first; a
+     * refusal names it in `details['index']`). Answers the created rows, in
+     * order. Gated by the `create` permission. `create()` takes one record, so
+     * a handler that writes its request body never becomes a bulk endpoint.
+     *
+     * @param list<array<string, mixed>> $rows
+     * @return list<array<string, mixed>>
+     */
+    public function createMany(Entity $entity, array $rows): array
+    {
+        $this->guard($entity, 'create', 'createMany');
+        $records = $entity->bulkRecords($rows);
+        if (! $this->adapter instanceof CreatesMany) {
+            throw new \RuntimeException("{$entity->name}.createMany() is not supported by the '{$this->adapter->kind()}' adapter");
+        }
+
+        return $this->adapter->createMany($entity, $records);
+    }
+
+    /**
      * A patch with no fields is rejected before it reaches the adapter — it is
      * a malformed request, not a write. PostgREST answers a column-less PATCH
      * with `200 []`, so the adapter would have no row to return; the JavaScript

@@ -12,6 +12,7 @@ use Revenexx\AppSdk\EmitTarget;
 use Revenexx\AppSdk\Entity;
 use Revenexx\AppSdk\Query;
 use Revenexx\AppSdk\RecordsEvents;
+use Revenexx\AppSdk\CreatesMany;
 use Revenexx\AppSdk\UpdatesConditionally;
 
 /**
@@ -19,7 +20,7 @@ use Revenexx\AppSdk\UpdatesConditionally;
  * fixtures. Does NOT enforce RLS, constraints, triggers or PostgREST semantics —
  * run the `remote` adapter against a dev tenant for that fidelity before deploy.
  */
-final class MockAdapter implements Adapter, CountsRows, EmitsEvents, RecordsEvents, UpdatesConditionally
+final class MockAdapter implements Adapter, CountsRows, CreatesMany, EmitsEvents, RecordsEvents, UpdatesConditionally
 {
     /** @var array<string, array<array-key, array<string, mixed>>> */
     private array $store = [];
@@ -167,9 +168,46 @@ final class MockAdapter implements Adapter, CountsRows, EmitsEvents, RecordsEven
         if (! isset($row[$entity->pk])) {
             $row[$entity->pk] = self::uuid();
         }
-        $this->store[$entity->name][$row[$entity->pk]] = $row;
+        // Through table(), so a seed not yet read is not lost.
+        $table = &$this->table($entity);
+        $table[$row[$entity->pk]] = $row;
 
         return $row;
+    }
+
+    /**
+     * One statement in Postgres: a primary key twice in the batch, or one the
+     * table already holds, is the 409 the remote adapter maps from 23505, and
+     * nothing is stored.
+     */
+    public function createMany(Entity $entity, array $rows): array
+    {
+        $out = [];
+        foreach ($entity->bulkRecords($rows) as $record) {
+            $row = $this->applyDefaults($entity, $record);
+            if (! isset($row[$entity->pk])) {
+                $row[$entity->pk] = self::uuid();
+            }
+            $out[] = $row;
+        }
+        $table = &$this->table($entity);
+        $seen = [];
+        foreach ($out as $row) {
+            $id = $row[$entity->pk];
+            if (isset($seen[$id]) || \array_key_exists($id, $table)) {
+                throw new HttpError(409, 'a record with this value already exists', null, 'unique_violation', [
+                    'source' => 'mock',
+                    'entity' => $entity->name,
+                    'duplicate' => $id,
+                ]);
+            }
+            $seen[$id] = true;
+        }
+        foreach ($out as $row) {
+            $table[$row[$entity->pk]] = $row;
+        }
+
+        return $out;
     }
 
     public function update(Entity $entity, int|string $id, array $patch): array
@@ -217,7 +255,9 @@ final class MockAdapter implements Adapter, CountsRows, EmitsEvents, RecordsEven
 
     public function remove(Entity $entity, int|string $id): void
     {
-        unset($this->store[$entity->name][$id]);
+        // Through table(), so a seed not yet read is not brought back later.
+        $table = &$this->table($entity);
+        unset($table[$id]);
     }
 
     /**

@@ -130,6 +130,72 @@ final class Entity
         }
     }
 
+    /** The one wording every layer uses for "createMany takes a list". */
+    public const MANY_RECORDS_MESSAGE = 'createMany takes a list of records';
+
+    /**
+     * The records of a `createMany`, in index order, checked before any request.
+     *
+     * PostgREST inserts a JSON array in one statement, so a bulk create is one
+     * request and every record must pass what a single create passes: the data
+     * is a list (else `400 bad_request`; `[]` is `400 empty_create`), an element
+     * that is not a record is `400 bad_request`, one with no field `400
+     * empty_create`, one naming a key that is not a column `400 unknown_field`,
+     * and one naming other fields than the first `400 bad_request` — PostgREST
+     * refuses an array whose objects do not share their keys (PGRST102). Each
+     * refusal of an element names it in `details['index']` (0-based). Same rule
+     * as the JavaScript SDK (`bulkRecords`).
+     *
+     * @param array<string|int, mixed> $data
+     * @return list<array<string, mixed>>
+     */
+    public function bulkRecords(array $data): array
+    {
+        if ($data === []) {
+            throw HttpError::badRequest(self::EMPTY_CREATE_MESSAGE, null, 'empty_create');
+        }
+        if (! self::isList($data)) {
+            throw HttpError::badRequest(self::MANY_RECORDS_MESSAGE, null, 'bad_request');
+        }
+        ksort($data, SORT_NUMERIC);
+        $records = array_values($data);
+        $shape = null;
+        foreach ($records as $index => $record) {
+            if (! \is_array($record) || self::isList($record)) {
+                throw HttpError::badRequest("record {$index} of a bulk create is not an object — each element is one record", ['index' => $index], 'bad_request');
+            }
+            if ($record === []) {
+                throw HttpError::badRequest("record {$index} of a bulk create has no field — " . self::EMPTY_CREATE_MESSAGE, ['index' => $index], 'empty_create');
+            }
+            $unknown = $this->unknownFields($record);
+            if ($unknown !== []) {
+                $quoted = implode(', ', array_map(static fn (string $k): string => "'{$k}'", $unknown));
+                $plural = \count($unknown) > 1 ? 's' : '';
+
+                throw HttpError::badRequest(
+                    "unknown field{$plural} {$quoted} in record {$index} — not a column of '{$this->name}'. "
+                        . 'A field that cannot be written is refused rather than dropped; see details.allowed.',
+                    ['index' => $index, 'unknown' => $unknown, 'allowed' => $this->writableColumns()],
+                    'unknown_field',
+                );
+            }
+            $fields = array_map('strval', array_keys($record));
+            sort($fields, SORT_STRING);
+            $key = implode("\0", $fields);
+            if ($shape === null) {
+                $shape = $key;
+            } elseif ($key !== $shape) {
+                throw HttpError::badRequest(
+                    "record {$index} of a bulk create names other fields than record 0 — every record of a bulk create names the same fields",
+                    ['index' => $index],
+                    'bad_request',
+                );
+            }
+        }
+
+        return $records;
+    }
+
     /** The one wording every layer uses for "a write takes one record". */
     public const ONE_RECORD_MESSAGE = 'a write takes one record, as a JSON object — not a list';
 

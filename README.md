@@ -143,6 +143,21 @@ condition no longer holds, so it gets `null`, reads again and decides again.
 Only the operations the manifest grants are available. Any other call fails with a
 `403` and the code `not_permitted`, naming the method.
 
+### Bulk create
+
+`create()` takes one record. `createMany()` takes a list and inserts it in one request,
+answering the created rows in order:
+
+```php
+$client->createMany($client->entity('segment_members'), $rows);
+```
+
+Every record is checked like one create, and all records name the same fields;
+a refusal names the record in `details['index']`. An empty list is `400 empty_create`.
+On the mock, a primary key twice in the list or one already stored is `409
+unique_violation`, nothing stored. An adapter takes part by implementing
+`CreatesMany`.
+
 ### Queries
 
 Every read takes the same shape: `where`, `select`, `order`, `limit`, `offset`.
@@ -315,7 +330,7 @@ The data client raises `HttpError`s itself:
 | a create with nothing to create (`[]`) | 400 | `empty_create` |
 | `updateIf` without a condition | 400 | `empty_condition` |
 | a write naming a key that is not a column of the entity | 400 | `unknown_field` |
-| a write that is a list instead of one record | 400 | `bad_request` |
+| a write that is a list instead of one record, or a `createMany` record that is not one or names other fields | 400 | `bad_request` |
 | an update whose row is gone | 404 | `not_found` |
 | a duplicate value | 409 | `unique_violation` |
 | a referenced record that does not exist | 400 | `foreign_key_violation` |

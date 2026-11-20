@@ -698,4 +698,82 @@ final class ParityTest extends TestCase
             $this->assertSame($case['allowed'], $res['data']['details']['allowed']);
         }
     }
+
+    /** @return iterable<string, array{array<string, mixed>}> */
+    public static function bulkCases(): iterable
+    {
+        if (self::fixture() === []) {
+            yield from self::absent(1);
+
+            return;
+        }
+        foreach (self::fixture()['bulk_creates']['cases'] as $case) {
+            yield $case['name'] => [$case];
+        }
+    }
+
+    /** @param array<string, mixed> $case */
+    // data-client AC-18 — createMany inserts a list of records in one request
+    // runtime-parity AC-9 — A write is checked against the same columns in both runtimes
+    #[Group('spec:data-client:AC-18')]
+    #[Group('spec:data-client')]
+    #[Group('spec:runtime-parity:AC-9')]
+    #[Group('spec:runtime-parity')]
+    #[DataProvider('bulkCases')]
+    public function testABulkCreateIsCheckedAlikeAndSentOnce(array $case): void
+    {
+        self::requireFixture();
+        $b = self::fixture()['bulk_creates'];
+        $e = new Entity('accounts', 't_accounts', 'id', $b['columns'], ['list', 'get', 'create']);
+        $refused = function (HttpError $err, array $want) use ($case, $b): void {
+            $this->assertSame([$want['status'], $want['code']], [$err->status, $err->errorCode]);
+            if ($want !== $case) {
+                return;
+            }
+            $at = isset($case['index']) ? ['index' => $case['index']] : [];
+            $this->assertSame(
+                $case['code'] === 'unknown_field' ? [...$at, 'unknown' => $case['unknown'], 'allowed' => $b['allowed']] : ($at !== [] ? $at : null),
+                $err->details,
+            );
+            if (isset($case['message'])) {
+                $this->assertSame($case['message'], $err->getMessage());
+            }
+        };
+        $records = $case['rows'] ?? (\is_array($case['data']) ? $case['data'] : []);
+
+        // The client on the mock: a refusal stores nothing.
+        $db = new Client(AdapterRegistry::create('mock', ['seed' => ['accounts' => $b['rows']]]), ['accounts' => $e]);
+        $want = $case['mock'] ?? $case;
+        try {
+            $rows = $db->createMany($e, \is_array($case['data']) ? $case['data'] : []);
+            $this->assertLessThan(400, $want['status'], 'expected a refusal');
+            foreach ($records as $i => $record) {
+                foreach ($record as $k => $v) {
+                    $this->assertSame($v, $rows[$i][$k]);
+                }
+            }
+            $this->assertCount(\count($b['rows']) + \count($records), $db->list($e));
+        } catch (HttpError $err) {
+            $refused($err, $want);
+            $this->assertSame($b['rows'], $db->list($e));
+        }
+
+        // The remote adapter: one request, the records in index order; a refusal sends none.
+        $sent = [];
+        $remote = new RemoteAdapter('http://pgrst:3000', transport: static function (string $m, string $u, array $h, ?string $body) use (&$sent): array {
+            $sent[] = json_decode((string) $body, true);
+
+            return ['status' => 201, 'body' => (string) $body];
+        });
+        $db = new Client($remote, ['accounts' => $e]);
+        try {
+            $rows = $db->createMany($e, \is_array($case['data']) ? $case['data'] : []);
+            $this->assertLessThan(400, $case['status'], 'expected a refusal');
+            $this->assertSame([$records], $sent);
+            $this->assertSame($records, $rows);
+        } catch (HttpError $err) {
+            $refused($err, $case);
+            $this->assertSame([], $sent);
+        }
+    }
 }

@@ -5,7 +5,24 @@ All notable changes to `revenexx/app-sdk` are listed here. The package follows
 
 ## Unreleased
 
-The next release is **2.0.0**: the first entry narrows every write, and a narrowing
+The next release is **2.1.0**: it adds a call and keeps every 2.0 promise.
+
+- **`createMany($entity, $rows)` inserts a list of records in one request.** PostgREST
+  inserts a JSON array in one statement, and Apps write sets that way. Every record is
+  checked like one create before anything is sent: a key that is not a column is
+  `400 unknown_field`, a record with no field `400 empty_create`, one that is not a
+  record or names other fields than the first `400 bad_request`, each naming the record
+  in `details['index']`. An empty list is `400 empty_create`. It answers the created
+  rows, in order. On the mock, a primary key twice in the list or one already stored is
+  `409 unique_violation`, nothing stored. An adapter takes part by implementing the new
+  `CreatesMany` interface; the client never emulates it. `create()` still takes one
+  record (`data-client` AC-18).
+- **The mock keeps its seed when the first call is a create or a remove.** Either one,
+  before any read, wrote past the seed, so the seeded rows were gone or came back.
+
+## 2.0.0
+
+The first entry narrows every write, and a narrowing
 is a major (`docs/versioning.md`). A `Crud::mount` route or a mock-backed test that
 wrote a key the entity does not declare starts failing with it.
 
