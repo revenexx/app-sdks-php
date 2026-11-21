@@ -145,8 +145,41 @@ final class Client
             throw HttpError::badRequest(self::EMPTY_UPDATE_MESSAGE, null, 'empty_update');
         }
         $entity->assertKnownFields($patch);
+        // A record read and sent back names fields no write may set
+        // ({@see RoundTrip::update()}): the ones that repeat the record are
+        // dropped, the ones that contradict it refused. Nothing left is no
+        // write at all — the record as it stands, no update event.
+        $stored = $this->storedOnce($entity, $id);
+        try {
+            $write = RoundTrip::update($entity->pk, $entity->columns, $id, $patch, $stored);
+        } catch (RecordGone) {
+            throw HttpError::notFound();
+        }
+        if ($write === []) {
+            return $stored() ?? throw HttpError::notFound();
+        }
 
-        return $this->adapter->update($entity, $id, $patch);
+        return $this->adapter->update($entity, $id, $write);
+    }
+
+    /**
+     * One read of a record, shared by every rule that needs it.
+     *
+     * @return callable(): (array<string, mixed>|null)
+     */
+    private function storedOnce(Entity $entity, int|string $id): callable
+    {
+        $read = false;
+        $row = null;
+
+        return function () use (&$read, &$row, $entity, $id): ?array {
+            if (! $read) {
+                $row = $this->adapter->get($entity, $id);
+                $read = true;
+            }
+
+            return $row;
+        };
     }
 
     /**
@@ -180,7 +213,20 @@ final class Client
             );
         }
 
-        return $this->adapter->updateIf($entity, $id, $where, $patch);
+        try {
+            $write = RoundTrip::update($entity->pk, $entity->columns, $id, $patch, $this->storedOnce($entity, $id));
+        } catch (RecordGone) {
+            return null;
+        }
+        // Nothing left to write: the row while the condition holds, else null —
+        // one read, the condition ANDed onto the key as the write would have.
+        if ($write === []) {
+            $rows = $this->adapter->list($entity, ['where' => [...$where, $entity->pk => $id], 'limit' => 1]);
+
+            return $rows[0] ?? null;
+        }
+
+        return $this->adapter->updateIf($entity, $id, $where, $write);
     }
 
     public function remove(Entity $entity, int|string $id): void

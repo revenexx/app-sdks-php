@@ -136,9 +136,10 @@ final class UnknownFieldTest extends TestCase
         // An entity whose descriptor lists no columns is not checked.
         $db->create($legacy, ['anything' => 1]);
 
+        // An update leaves updated_at to Baseline, which stamps it (data-client AC-19).
         $this->assertSame([
             ['name' => 'x', 'settings' => $settings, 'tenant_id' => 'acme', 'created_at' => '2026-01-01T00:00:00Z'],
-            ['deleted_at' => '2026-01-02T00:00:00Z', 'updated_at' => '2026-01-02T00:00:00Z'],
+            ['deleted_at' => '2026-01-02T00:00:00Z'],
             ['anything' => 1],
         ], array_map(static fn (?string $b): mixed => json_decode((string) $b, true), $sent));
     }

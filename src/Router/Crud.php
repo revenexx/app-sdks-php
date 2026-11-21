@@ -8,6 +8,7 @@ use Revenexx\AppSdk\Client;
 use Revenexx\AppSdk\CountsRows;
 use Revenexx\AppSdk\Entity;
 use Revenexx\AppSdk\HttpError;
+use Revenexx\AppSdk\RoundTrip;
 
 /**
  * The five REST routes for one entity, in one call — the counterpart of
@@ -28,7 +29,15 @@ use Revenexx\AppSdk\HttpError;
  * The columns the entity's `trash` / `external_id` flags add are list filters
  * as well, whether or not `columns` names them, unless `queryParams` claims the
  * key. On a `trash: true` entity `POST` / `PUT` refuse a body that sets a trash
- * column (`400 read_only_field`): only the trash routes write them.
+ * column (`400 read_only_field`): only the trash routes write them; one sent as
+ * null — what a live record reads — is dropped.
+ *
+ * A record read and sent back is an edit ({@see RoundTrip}): `PUT` drops the
+ * key, the tenant, the timestamps, the stored generated columns and the
+ * columns named in `readOnly` when they repeat the record, refuses them when
+ * they do not, and answers the record unchanged when nothing is left. `POST`
+ * refuses a value for a key the store assigns and a tenant other than the
+ * request's.
  */
 final class Crud
 {
@@ -51,6 +60,8 @@ final class Crud
         // declared one, so a list accepts every column a write may name.
         $flagColumns = $entity->flagColumns();
         $parent = $options['parent'] ?? null;
+        // Columns the App keeps itself: a PUT may repeat them, never change them.
+        $readOnly = array_values(array_map('strval', $options['readOnly'] ?? []));
 
         if (\in_array('list', $enabled, true)) {
             $app->get($base, static function (RouteContext $c) use ($client, $entity, $options, $columns, $flagColumns, $parent, $defaultLimit, $maxLimit): mixed {
@@ -98,16 +109,22 @@ final class Crud
         }
 
         if (\in_array('create', $enabled, true)) {
-            $app->post($base, static function (RouteContext $c) use ($client, $entity, $parent): mixed {
+            $app->post($base, static function (RouteContext $c) use ($client, $entity, $parent, $columns): mixed {
                 // A list is not one record; merged with the parent it would
                 // arrive as keys 0, 1, … Refused as itself, before the lookup.
                 if (Entity::isList($c->body)) {
                     throw Entity::oneRecordRefusal();
                 }
-                $entity->assertNoTrashFields($c->body);
+                // A record copied from a read carries its trash columns as
+                // null — what a new record holds — so they are dropped; a
+                // value is refused.
+                $body = $entity->trash ? RoundTrip::withoutNullTrash($c->body) : $c->body;
+                $entity->assertNoTrashFields($body);
+                // The key the store assigns and the tenant are not the caller's.
+                $fields = RoundTrip::create($entity->pk, $columns, $body, $c->tenant);
                 self::assertParentExists($c, $client, $parent);
 
-                return $c->json($client->create($entity, [...$c->body, ...self::parentWhere($c, $parent)]), 201);
+                return $c->json($client->create($entity, [...$fields, ...self::parentWhere($c, $parent)]), 201);
             });
         }
 
@@ -118,18 +135,33 @@ final class Crud
         }
 
         if (\in_array('update', $enabled, true)) {
-            $app->put($idTemplate, static function (RouteContext $c) use ($client, $entity, $parent, $idParam): mixed {
+            $app->put($idTemplate, static function (RouteContext $c) use ($client, $entity, $parent, $idParam, $columns, $readOnly): mixed {
                 if (Entity::isList($c->body)) {
                     throw Entity::oneRecordRefusal();
                 }
-                $entity->assertNoTrashFields($c->body);
-                [$id] = self::fetchOwned($c, $client, $entity, $parent, $idParam);
+                // A live record reads its trash columns as null, and an edit
+                // form sends the read back: null is dropped, a value refused.
+                $body = $entity->trash ? RoundTrip::withoutNullTrash($c->body) : $c->body;
+                $entity->assertNoTrashFields($body);
+                [$id, $row] = self::fetchOwned($c, $client, $entity, $parent, $idParam);
+                // The body as sent: `{}` is a request with nothing in it.
                 if ($c->body === []) {
                     throw HttpError::badRequest(Client::EMPTY_UPDATE_MESSAGE, null, 'empty_update');
                 }
+                // A record sent back repeats what no write may set: dropped
+                // when it says what the record says, refused otherwise.
+                $fields = RoundTrip::update($entity->pk, $columns, $id, $body, static fn (): array => $row, $readOnly);
+                // The parent key comes from the path whatever the body says.
+                if ($parent !== null) {
+                    unset($fields[$parent['column']]);
+                }
+                // Nothing left: the record as it stands, no write, no update event.
+                if ($fields === []) {
+                    return $c->json($row);
+                }
 
                 // Never let a body overwrite the nested-parent FK.
-                return $c->json($client->update($entity, $id, [...$c->body, ...self::parentWhere($c, $parent)]));
+                return $c->json($client->update($entity, $id, [...$fields, ...self::parentWhere($c, $parent)]));
             });
         }
 

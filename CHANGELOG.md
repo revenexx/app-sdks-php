@@ -5,7 +5,30 @@ All notable changes to `revenexx/app-sdk` are listed here. The package follows
 
 ## Unreleased
 
-The next release is **2.1.0**: it adds a call and keeps every 2.0 promise.
+The next release is **2.2.0**: a record read and sent back is written as the change
+it makes. Every write that answered before still answers.
+
+- **A record read and sent back with `PUT` is an edit.** `Crud::mount`'s `PUT`, and
+  `Client::update()` / `updateIf()` for every patch, drop the fields a read carries
+  when they repeat the record: the key and `tenant_id` (no UPDATE grant — the data
+  plane answered `401`), `updated_at` always, `created_at` naming the same instant,
+  a generated column or a column named in the new `readOnly` option equal to the
+  stored value. A value that contradicts the record is refused with `400
+  store_owned_field` (key, tenant) or `400 read_only_field` (the rest), naming it in
+  `details['field']`. When nothing is left nothing is written: `update()` and `PUT`
+  answer the record, `updateIf()` the record while its condition holds, else null. A
+  body of `[]` is still `400 empty_update` (`data-client` AC-19, `crud-routes`
+  AC-12).
+- **A trash column sent as null is dropped on a mounted route.** It is what a live
+  record reads; a value is still `400 read_only_field` (`crud-routes` AC-11).
+- **`POST` refuses a key the store assigns and another tenant** with `400
+  store_owned_field`; the request's tenant and null are dropped (`crud-routes` AC-13).
+- **The mock refuses an update naming the key or `tenant_id`** with the `401` the
+  grant makes production answer (`mock-fidelity` AC-6).
+
+## 2.1.0
+
+It adds a call and keeps every 2.0 promise.
 
 - **`createMany($entity, $rows)` inserts a list of records in one request.** PostgREST
   inserts a JSON array in one statement, and Apps write sets that way. Every record is

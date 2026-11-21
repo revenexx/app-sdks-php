@@ -638,6 +638,11 @@ final class ParityTest extends TestCase
                 $res['data']['details'],
             );
             $this->assertSame($f['rows'], $db->list($e));
+        } elseif ($want['unchanged'] ?? false) {
+            // Nothing left to write: the record as it stands, untouched.
+            $stored = array_values(array_filter($f['rows'], static fn (array $r): bool => $r['id'] === $case['id']))[0];
+            $this->assertSame($stored, $res['data']);
+            $this->assertSame($f['rows'], $db->list($e));
         } else {
             foreach ($case['data'] as $k => $v) {
                 $this->assertSame($v, $res['data'][$k]);
@@ -775,5 +780,166 @@ final class ParityTest extends TestCase
             $refused($err, $case);
             $this->assertSame([], $sent);
         }
+    }
+
+    /** @return iterable<string, array{array<string, mixed>, string}> */
+    public static function roundTripCases(): iterable
+    {
+        if (! is_file(self::FIXTURE)) {
+            yield 'parity cases not available' => [[], 'client'];
+
+            return;
+        }
+        foreach (self::fixture()['round_trips']['cases'] as $case) {
+            foreach (['client', 'route'] as $layer) {
+                if (isset($case[$layer])) {
+                    yield "{$layer}: {$case['name']}" => [$case, $layer];
+                }
+            }
+        }
+    }
+
+    private static function roundTripEntity(): Entity
+    {
+        $r = self::fixture()['round_trips'];
+
+        return new Entity('items', 't_items', $r['entity']['pk'], $r['entity']['columns'], ['list', 'get', 'create', 'update'], trash: $r['entity']['trash']);
+    }
+
+    /**
+     * A data plane holding the fixture's row: a read by id or by filter answers
+     * it when every `eq.` filter matches, a PATCH and a POST the row they made.
+     *
+     * @param list<array<string, mixed>> $writes
+     */
+    private static function roundTripPlane(array &$writes): RemoteAdapter
+    {
+        $r = self::fixture()['round_trips'];
+
+        return new RemoteAdapter('http://pgrst:3000', transport: static function (string $m, string $u, array $h, ?string $body) use (&$writes, $r): array {
+            if ($m === 'GET') {
+                $holds = true;
+                foreach (explode('&', (string) parse_url($u, PHP_URL_QUERY)) as $pair) {
+                    [$k, $v] = array_map('rawurldecode', explode('=', $pair, 2) + [1 => '']);
+                    if ($k === '' || \in_array($k, ['select', 'limit', 'offset', 'order'], true)) {
+                        continue;
+                    }
+                    $holds = $holds && str_starts_with($v, 'eq.') && (string) ($r['row'][$k] ?? '') === substr($v, 3);
+                }
+
+                return ['status' => 200, 'body' => (string) json_encode($holds ? [$r['row']] : [])];
+            }
+            $data = json_decode((string) $body, true);
+            $writes[] = $data;
+            $row = $m === 'POST' ? ['id' => 'new', 'tenant_id' => $r['tenant'], ...$data] : [...$r['row'], ...$data];
+
+            return ['status' => $m === 'POST' ? 201 : 200, 'body' => (string) json_encode([$row])];
+        });
+    }
+
+    /**
+     * A record read and sent back, through the data client and the mounted
+     * route, on a data plane that records every write.
+     *
+     * @param array<string, mixed> $case
+     */
+    #[Group('spec:runtime-parity:AC-9')]
+    #[Group('spec:runtime-parity')]
+    #[Group('spec:data-client:AC-19')]
+    #[Group('spec:data-client')]
+    #[Group('spec:crud-routes:AC-12')]
+    #[Group('spec:crud-routes:AC-13')]
+    #[Group('spec:crud-routes')]
+    #[DataProvider('roundTripCases')]
+    public function testARecordSentBackIsAnsweredAsTheFixtureSays(array $case, string $layer): void
+    {
+        self::requireFixture();
+        $r = self::fixture()['round_trips'];
+        $e = self::roundTripEntity();
+        $writes = [];
+        $db = new Client(self::roundTripPlane($writes), ['items' => $e]);
+        $want = $case[$layer];
+
+        if ($layer === 'client') {
+            try {
+                $row = $case['call'] === 'updateIf'
+                    ? $db->updateIf($e, $case['id'], $case['where'], $case['data'])
+                    : $db->update($e, $case['id'], $case['data']);
+                $this->assertLessThan(400, $want['status'], 'expected a refusal');
+            } catch (HttpError $err) {
+                $this->assertSame([$want['status'], $want['code']], [$err->status, $err->errorCode]);
+                if (isset($want['fields'])) {
+                    $this->assertSame($want['fields'], $err->details['fields'] ?? null);
+                }
+                $this->assertSame([], $writes);
+
+                return;
+            }
+        } else {
+            $app = new App(['name' => 'items']);
+            Crud::mount($app, $db, $e, ['path' => '/items', 'columns' => $r['entity']['columns'], 'readOnly' => $r['readOnly']]);
+            $res = $case['call'] === 'create'
+                ? FakeContext::call($app, 'POST', '/items', ['body' => $case['data'], 'headers' => ['x-revenexx-tenant' => $r['tenant']]])
+                : FakeContext::call($app, 'PUT', "/items/{$case['id']}", ['body' => $case['data'], 'headers' => ['x-revenexx-tenant' => $r['tenant']]]);
+            $this->assertSame($want['status'], $res['status'], $res['raw']);
+            if ($want['status'] >= 400) {
+                $this->assertSame($want['code'], $res['data']['code']);
+                if (isset($want['fields'])) {
+                    $this->assertSame($want['fields'], $res['data']['details']['fields'] ?? null);
+                }
+                $this->assertSame([], $writes);
+
+                return;
+            }
+            $row = $res['data'];
+        }
+
+        if (\array_key_exists('write', $want) && $want['write'] === null) {
+            $this->assertSame([], $writes);
+            $answer = \array_key_exists('answer', $want) ? $want['answer'] : 'row';
+            $this->assertEquals($answer === 'row' ? $r['row'] : null, $row);
+        } else {
+            $this->assertEquals([$want['write']], $writes);
+        }
+    }
+
+    /** @return iterable<string, array{array<string, mixed>}> */
+    public static function mockGrantCases(): iterable
+    {
+        if (! is_file(self::FIXTURE)) {
+            yield from self::absent(1);
+
+            return;
+        }
+        foreach (self::fixture()['round_trips']['mock_grant'] as $case) {
+            yield $case['name'] => [$case];
+        }
+    }
+
+    /** @param array<string, mixed> $case */
+    #[Group('spec:runtime-parity:AC-9')]
+    #[Group('spec:runtime-parity')]
+    #[Group('spec:mock-fidelity:AC-6')]
+    #[Group('spec:mock-fidelity')]
+    #[DataProvider('mockGrantCases')]
+    public function testTheMockRefusesTheKeyAndTheTenantAsTheGrantDoes(array $case): void
+    {
+        self::requireFixture();
+        $r = self::fixture()['round_trips'];
+        $e = self::roundTripEntity();
+        $mock = AdapterRegistry::create('mock', ['seed' => ['items' => [$r['row']]]]);
+        foreach ([
+            static fn () => $mock->update($e, 'r1', $case['data']),
+            static fn () => $mock->updateIf($e, 'r1', ['code' => 'one'], $case['data']),
+        ] as $write) {
+            try {
+                $write();
+                $this->fail('expected the grant to refuse the write');
+            } catch (HttpError $err) {
+                $this->assertSame([401, 'bad_request', 'unauthenticated'], [$err->status, $err->errorCode, $err->getMessage()]);
+                $this->assertSame(['42501', $case['columns']], [$err->serverDetail['sqlstate'] ?? null, $err->serverDetail['columns'] ?? null]);
+            }
+        }
+        $this->assertSame($r['row'], $mock->get($e, 'r1'));
     }
 }

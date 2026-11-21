@@ -256,9 +256,21 @@ a `400`, never silently ignored:
 The columns the entity's `trash` / `external_id` flags add filter the list like a
 declared column, whether or not `columns` names them; a key you claim in
 `queryParams` stays yours. On a `trash: true` entity, `POST` / `PUT` refuse a body
-that sets a trash column (`null` included) with `400 read_only_field`, naming them in
-`details['fields']` — only `Trash::mount` writes them. `external_id` is written like
-any column.
+that sets a trash column to a value with `400 read_only_field`, naming them in
+`details['fields']` — only `Trash::mount` writes them; sent as `null`, what a live
+record reads, they are dropped. `external_id` is written like any column.
+
+**A record read and sent back is an edit** (the same rules as the JavaScript SDK,
+`RoundTrip`). `PUT` compares the fields a read carries with the row it has just
+read: the key and `tenant_id` are dropped when they repeat it and refused with
+`400 store_owned_field` otherwise; `updated_at` is always dropped; `created_at`, a
+`generated` column and a column named in the `readOnly` option are dropped when
+they repeat the stored value and refused with `400 read_only_field` otherwise. A
+refusal names the field in `details['field']`. When nothing is left, `PUT` answers
+the record without writing. `POST` refuses a value for a key the store assigns
+(`serial`, or `default: gen_random_uuid()`) and another tenant than the request's.
+`Client::update()` / `updateIf()` apply the same rules to every patch, and the mock
+refuses an update naming the key or `tenant_id` with the `401` production gives.
 
 ### The trash in one call
 
@@ -327,6 +339,8 @@ The data client raises `HttpError`s itself:
 |---|---|---|
 | an operation the manifest does not grant | 403 | `not_permitted` |
 | an update with nothing to update | 400 | `empty_update` |
+| an update naming another key or tenant than the record's | 400 | `store_owned_field` |
+| an update changing `created_at` or a generated column | 400 | `read_only_field` |
 | a create with nothing to create (`[]`) | 400 | `empty_create` |
 | `updateIf` without a condition | 400 | `empty_condition` |
 | a write naming a key that is not a column of the entity | 400 | `unknown_field` |

@@ -213,6 +213,7 @@ final class MockAdapter implements Adapter, CountsRows, CreatesMany, EmitsEvents
     public function update(Entity $entity, int|string $id, array $patch): array
     {
         $entity->assertKnownFields($patch);
+        self::assertUpdatableColumns($entity, $patch);
         $cur = $this->table($entity)[$id] ?? null;
         if ($cur === null) {
             throw HttpError::notFound("mock: {$entity->name}/{$id} not found");
@@ -229,12 +230,43 @@ final class MockAdapter implements Adapter, CountsRows, CreatesMany, EmitsEvents
     {
         self::assertWhereColumns($entity, $where);
         $entity->assertKnownFields($patch);
+        self::assertUpdatableColumns($entity, $patch);
         $cur = $this->table($entity)[$id] ?? null;
         if ($cur === null || ! Query::matches($cur, $where)) {
             return null;
         }
 
         return $this->write($entity, $id, $cur, $patch);
+    }
+
+    /**
+     * Baseline grants no UPDATE on the primary key or on `tenant_id`, so
+     * PostgREST answers a PATCH naming either — even with the value the row
+     * holds — with SQLSTATE 42501, which the remote adapter answers 401
+     * (`bad_request`, `unauthenticated`). The client drops a key or tenant that
+     * repeats the record before an adapter sees it; this is the backstop that
+     * keeps a test from passing on a write production refuses. Same rule as
+     * the JavaScript mock.
+     *
+     * @param array<string|int, mixed> $patch
+     */
+    private static function assertUpdatableColumns(Entity $entity, array $patch): void
+    {
+        $refused = array_values(array_filter(
+            array_unique([$entity->pk !== '' ? $entity->pk : 'id', 'tenant_id']),
+            static fn (string $k): bool => \array_key_exists($k, $patch),
+        ));
+        if ($refused === []) {
+            return;
+        }
+        sort($refused, SORT_STRING);
+
+        throw new HttpError(401, 'unauthenticated', null, 'bad_request', [
+            'source' => 'mock',
+            'entity' => $entity->name,
+            'sqlstate' => '42501',
+            'columns' => $refused,
+        ]);
     }
 
     /**
