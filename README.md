@@ -257,15 +257,18 @@ The columns the entity's `trash` / `external_id` flags add filter the list like 
 declared column, whether or not `columns` names them; a key you claim in
 `queryParams` stays yours. On a `trash: true` entity, `POST` / `PUT` refuse a body
 that sets a trash column to a value with `400 read_only_field`, naming them in
-`details['fields']` — only `Trash::mount` writes them; sent as `null`, what a live
-record reads, they are dropped. `external_id` is written like any column.
+`details['fields']` — only `Trash::mount` writes them. Sent as `null` they are
+dropped while the record holds `null` too (a live record read and sent back); `null`
+to a record in the trash is still refused. `external_id` is written like any column.
 
 **A record read and sent back is an edit** (the same rules as the JavaScript SDK,
 `RoundTrip`). `PUT` compares the fields a read carries with the row it has just
 read: the key and `tenant_id` are dropped when they repeat it and refused with
-`400 store_owned_field` otherwise; `updated_at` is always dropped; `created_at`, a
-`generated` column and a column named in the `readOnly` option are dropped when
-they repeat the stored value and refused with `400 read_only_field` otherwise. A
+`400 store_owned_field` otherwise; `updated_at` is dropped unless it is the only
+field (a touch); `created_at` is dropped when it names the stored instant and
+written otherwise; a `generated` column is always dropped; a column named in the
+`readOnly` option is dropped when it repeats the stored value (compared by its
+type) and refused with `400 read_only_field` otherwise. A
 refusal names the field in `details['field']`. When nothing is left, `PUT` answers
 the record without writing. `POST` refuses a value for a key the store assigns
 (`serial`, or `default: gen_random_uuid()`) and another tenant than the request's.
@@ -340,7 +343,7 @@ The data client raises `HttpError`s itself:
 | an operation the manifest does not grant | 403 | `not_permitted` |
 | an update with nothing to update | 400 | `empty_update` |
 | an update naming another key or tenant than the record's | 400 | `store_owned_field` |
-| an update changing `created_at` or a generated column | 400 | `read_only_field` |
+| a `Crud::mount` `PUT` changing a `readOnly` column | 400 | `read_only_field` |
 | a create with nothing to create (`[]`) | 400 | `empty_create` |
 | `updateIf` without a condition | 400 | `empty_condition` |
 | a write naming a key that is not a column of the entity | 400 | `unknown_field` |

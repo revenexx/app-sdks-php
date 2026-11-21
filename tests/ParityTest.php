@@ -812,11 +812,11 @@ final class ParityTest extends TestCase
      *
      * @param list<array<string, mixed>> $writes
      */
-    private static function roundTripPlane(array &$writes): RemoteAdapter
+    private static function roundTripPlane(array &$writes, array $row): RemoteAdapter
     {
         $r = self::fixture()['round_trips'];
 
-        return new RemoteAdapter('http://pgrst:3000', transport: static function (string $m, string $u, array $h, ?string $body) use (&$writes, $r): array {
+        return new RemoteAdapter('http://pgrst:3000', transport: static function (string $m, string $u, array $h, ?string $body) use (&$writes, $r, $row): array {
             if ($m === 'GET') {
                 $holds = true;
                 foreach (explode('&', (string) parse_url($u, PHP_URL_QUERY)) as $pair) {
@@ -824,16 +824,16 @@ final class ParityTest extends TestCase
                     if ($k === '' || \in_array($k, ['select', 'limit', 'offset', 'order'], true)) {
                         continue;
                     }
-                    $holds = $holds && str_starts_with($v, 'eq.') && (string) ($r['row'][$k] ?? '') === substr($v, 3);
+                    $holds = $holds && str_starts_with($v, 'eq.') && (string) ($row[$k] ?? '') === substr($v, 3);
                 }
 
-                return ['status' => 200, 'body' => (string) json_encode($holds ? [$r['row']] : [])];
+                return ['status' => 200, 'body' => (string) json_encode($holds ? [$row] : [])];
             }
             $data = json_decode((string) $body, true);
             $writes[] = $data;
-            $row = $m === 'POST' ? ['id' => 'new', 'tenant_id' => $r['tenant'], ...$data] : [...$r['row'], ...$data];
+            $made = $m === 'POST' ? ['id' => 'new', 'tenant_id' => $r['tenant'], ...$data] : [...$row, ...$data];
 
-            return ['status' => $m === 'POST' ? 201 : 200, 'body' => (string) json_encode([$row])];
+            return ['status' => $m === 'POST' ? 201 : 200, 'body' => (string) json_encode([$made])];
         });
     }
 
@@ -857,7 +857,8 @@ final class ParityTest extends TestCase
         $r = self::fixture()['round_trips'];
         $e = self::roundTripEntity();
         $writes = [];
-        $db = new Client(self::roundTripPlane($writes), ['items' => $e]);
+        $stored = [...$r['row'], ...($case['stored'] ?? [])];
+        $db = new Client(self::roundTripPlane($writes, $stored), ['items' => $e]);
         $want = $case[$layer];
 
         if ($layer === 'client') {
@@ -897,7 +898,7 @@ final class ParityTest extends TestCase
         if (\array_key_exists('write', $want) && $want['write'] === null) {
             $this->assertSame([], $writes);
             $answer = \array_key_exists('answer', $want) ? $want['answer'] : 'row';
-            $this->assertEquals($answer === 'row' ? $r['row'] : null, $row);
+            $this->assertEquals($answer === 'row' ? $stored : null, $row);
         } else {
             $this->assertEquals([$want['write']], $writes);
         }

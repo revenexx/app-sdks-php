@@ -28,16 +28,18 @@ final class RoundTrip
 
     public const READ_ONLY_FIELD = 'read_only_field';
 
-    /** Stamped by Baseline on every write, so dropped whatever an update says. */
+    /** Stamped by Baseline on every write: dropped from an update, unless it is all the update sends (a touch). */
     public const STORE_STAMPED_COLUMNS = ['updated_at'];
 
-    /** Stamped when the record is created; an update may repeat it, never change it. */
+    /** Stamped when the record is created: dropped when an update repeats it, written when it corrects it. */
     public const CREATION_STAMP_COLUMNS = ['created_at'];
 
     /** The trash columns a live record reads as null — `purge_at` is declared by the Apps that show it. */
     public const TRASH_ROUND_TRIP_COLUMNS = [...Entity::TRASH_FLAG_COLUMNS, 'purge_at'];
 
-    private const NUMERIC = '/^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/';
+    private const DECIMAL = '/^([+-]?)(\d*)(?:\.(\d*))?$/';
+
+    private const NUMERIC_TYPE = '/^(?:(?:small|big)?int(?:eger)?|int[248]|(?:big|small)?serial|serial[248]|numeric|decimal|real|double|float[48]?)\b/i';
 
     private const INSTANT = '/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/';
 
@@ -52,11 +54,14 @@ final class RoundTrip
      * - `tenant_id`: equal to the record's → dropped; another → 400
      *   `store_owned_field`; null / '' → dropped. A record that does not carry
      *   its tenant cannot be compared, and the value is dropped.
-     * - `updated_at`: always dropped. `created_at`: the same instant, in any
-     *   offset → dropped; anything else → 400 `read_only_field`. Both only when
-     *   the entity declares them (or carries no column metadata).
-     * - a stored generated column, and every column in `$readOnly`: equal to the
-     *   stored value → dropped; anything else → 400 `read_only_field`.
+     * - `updated_at`: dropped, unless it is the only field sent — a touch, whose
+     *   write makes Baseline's trigger stamp the time. `created_at`: the same
+     *   instant, in any offset → dropped; another instant is written (a
+     *   correction). Both only when the entity declares them (or carries no
+     *   column metadata).
+     * - a stored generated column: always dropped — Postgres computes it.
+     * - every column in `$readOnly`: equal to the stored value (by the column's
+     *   type) → dropped; anything else → 400 `read_only_field`.
      *
      * `$stored` is called at most once, and only when a rule needs the record;
      * when it answers null, {@see RecordGone} is thrown.
@@ -99,8 +104,10 @@ final class RoundTrip
             }
             unset($out['tenant_id']);
         }
+        // A patch of nothing but updated_at is a touch: the write is the point.
+        $touch = \count($patch) === 1 && \in_array((string) array_key_first($patch), self::STORE_STAMPED_COLUMNS, true);
         foreach (self::STORE_STAMPED_COLUMNS as $field) {
-            if (\array_key_exists($field, $out) && self::declares($columns, $field)) {
+            if (! $touch && \array_key_exists($field, $out) && self::declares($columns, $field)) {
                 unset($out[$field]);
             }
         }
@@ -108,20 +115,25 @@ final class RoundTrip
             if (! \array_key_exists($field, $out) || ! self::declares($columns, $field)) {
                 continue;
             }
-            if (! self::sameInstant($out[$field], $record()[$field] ?? null)) {
-                throw self::readOnly($field, 'stamped by the platform');
+            // Another instant is written, as before: a correction.
+            if (self::sameInstant($out[$field], $record()[$field] ?? null)) {
+                unset($out[$field]);
             }
+        }
+        // Postgres computes a generated column: dropped whatever it says.
+        $generated = self::generatedColumns($columns);
+        foreach ($generated as $field) {
             unset($out[$field]);
         }
-        $generated = self::generatedColumns($columns);
-        $fixed = array_values(array_unique([...$generated, ...$readOnly]));
+        $fixed = array_values(array_unique($readOnly));
         sort($fixed, SORT_STRING);
         foreach ($fixed as $field) {
-            if (! \array_key_exists($field, $out)) {
+            if (! \array_key_exists($field, $out) || \in_array($field, $generated, true)) {
                 continue;
             }
-            if (! self::sameValue($out[$field], $record()[$field] ?? null)) {
-                throw self::readOnly($field, \in_array($field, $generated, true) ? 'computed by the database' : 'kept by the app');
+            $type = \is_array($columns[$field] ?? null) ? ($columns[$field]['type'] ?? null) : null;
+            if (! self::sameValue($out[$field], $record()[$field] ?? null, $type)) {
+                throw self::readOnly($field, 'kept by the app');
             }
             unset($out[$field]);
         }
@@ -159,8 +171,31 @@ final class RoundTrip
     }
 
     /**
-     * A body without the trash columns a live record reads as null; a trash
-     * column with a value stays, for {@see Entity::assertNoTrashFields()}.
+     * An update's body without the trash columns sent as null that the stored
+     * record holds as null too — what a live record reads. A null the record
+     * does not hold (a record in the trash) stays, for
+     * {@see Entity::assertNoTrashFields()} to refuse: it would restore the
+     * record past the trash routes. `purge_at` stays to be written as before.
+     *
+     * @param array<string|int, mixed> $body
+     * @param array<string, mixed>     $stored
+     * @return array<string|int, mixed>
+     */
+    public static function trashRoundTripped(array $body, array $stored): array
+    {
+        foreach (self::TRASH_ROUND_TRIP_COLUMNS as $k) {
+            if (\array_key_exists($k, $body) && $body[$k] === null && ($stored[$k] ?? null) === null) {
+                unset($body[$k]);
+            }
+        }
+
+        return $body;
+    }
+
+    /**
+     * A body without its trash columns sent as null — for a create, where the
+     * new record holds exactly that; a trash column with a value stays, for
+     * {@see Entity::assertNoTrashFields()}.
      *
      * @param array<string|int, mixed> $body
      * @return array<string|int, mixed>
@@ -239,8 +274,18 @@ final class RoundTrip
         return $ms($x) === $ms($y);
     }
 
-    /** Two values are the same as a read answers them: documents by JSON, numbers by value, instants by instant. */
-    public static function sameValue(mixed $a, mixed $b): bool
+    /** Whether a column type compares by number (`int`, `bigint`, `numeric(14,3)`, `real`, …). */
+    public static function isNumericType(mixed $type): bool
+    {
+        return \is_string($type) && (bool) preg_match(self::NUMERIC_TYPE, trim($type));
+    }
+
+    /**
+     * Two values are the same as a read answers them: documents by JSON,
+     * instants by instant, a column of a numeric type by number — exactly, so
+     * a big integer is never rounded — and the rest as text.
+     */
+    public static function sameValue(mixed $a, mixed $b, mixed $type = null): bool
     {
         if ($a === null || $b === null) {
             return $a === null && $b === null;
@@ -251,12 +296,32 @@ final class RoundTrip
         if (self::text($a) === self::text($b)) {
             return true;
         }
-        $numeric = static fn (mixed $v): bool => \is_int($v) || \is_float($v) || (\is_string($v) && preg_match(self::NUMERIC, trim($v)));
-        if ($numeric($a) && $numeric($b)) {
-            return (float) $a === (float) $b;
+        if (self::isNumericType($type)) {
+            $x = self::decimal($a);
+            $y = self::decimal($b);
+            if ($x !== null && $y !== null) {
+                return $x === $y;
+            }
+            // An exponent (1e21) is no plain decimal; compare it as a float.
+            return is_numeric($a) && is_numeric($b) && (float) $a === (float) $b;
         }
 
         return self::sameInstant($a, $b);
+    }
+
+    /** A plain decimal normalised exactly (sign, no leading or trailing zeros), or null. */
+    private static function decimal(mixed $v): ?string
+    {
+        $text = \is_int($v) ? (string) $v : (\is_float($v) ? (is_finite($v) ? self::text($v) : '') : (\is_string($v) ? trim($v) : ''));
+        if (! preg_match(self::DECIMAL, $text, $m) || ($m[2] === '' && ($m[3] ?? '') === '')) {
+            return null;
+        }
+        $whole = ltrim($m[2], '0');
+        $whole = $whole === '' ? '0' : $whole;
+        $fraction = rtrim($m[3] ?? '', '0');
+        $digits = $fraction !== '' ? "{$whole}.{$fraction}" : $whole;
+
+        return $digits === '0' ? '0' : ($m[1] === '-' ? '-' : '') . $digits;
     }
 
     private static function canonical(mixed $v): string
@@ -273,7 +338,8 @@ final class RoundTrip
             return $v;
         };
 
-        return (string) json_encode($sort($v), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
+        // No JSON_PRESERVE_ZERO_FRACTION: JavaScript reads 1.0 as 1, so 1.0 and 1 are one value.
+        return (string) json_encode($sort($v), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     }
 
     /** A value as JavaScript's String() writes it. */
@@ -281,6 +347,11 @@ final class RoundTrip
     {
         if (\is_bool($v)) {
             return $v ? 'true' : 'false';
+        }
+
+        if (\is_float($v)) {
+            // Shortest round trip, as JavaScript writes a number (0.1 + 0.2, 1e+21).
+            return str_replace('.0e', 'e', (string) json_encode($v));
         }
 
         return \is_scalar($v) ? (string) $v : (string) json_encode($v);

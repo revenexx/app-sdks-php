@@ -33,9 +33,11 @@ use Revenexx\AppSdk\RoundTrip;
  * null — what a live record reads — is dropped.
  *
  * A record read and sent back is an edit ({@see RoundTrip}): `PUT` drops the
- * key, the tenant, the timestamps, the stored generated columns and the
- * columns named in `readOnly` when they repeat the record, refuses them when
- * they do not, and answers the record unchanged when nothing is left. `POST`
+ * key and the tenant when they repeat the record (refusing another), the
+ * stored generated columns always, `updated_at` unless it is all that was
+ * sent, `created_at` when it names the stored instant, and the columns named
+ * in `readOnly` when they repeat the record (refusing another value). It
+ * answers the record unchanged when nothing is left. `POST`
  * refuses a value for a key the store assigns and a tenant other than the
  * request's.
  */
@@ -139,11 +141,14 @@ final class Crud
                 if (Entity::isList($c->body)) {
                     throw Entity::oneRecordRefusal();
                 }
-                // A live record reads its trash columns as null, and an edit
-                // form sends the read back: null is dropped, a value refused.
-                $body = $entity->trash ? RoundTrip::withoutNullTrash($c->body) : $c->body;
-                $entity->assertNoTrashFields($body);
+                // A trash column with a value is refused before any round trip.
+                $entity->assertNoTrashFields($entity->trash ? RoundTrip::withoutNullTrash($c->body) : $c->body);
                 [$id, $row] = self::fetchOwned($c, $client, $entity, $parent, $idParam);
+                // A null the stored record holds too is dropped (a live record
+                // read and sent back); one on a record in the trash would
+                // restore it, and is refused.
+                $body = $entity->trash ? RoundTrip::trashRoundTripped($c->body, $row) : $c->body;
+                $entity->assertNoTrashFields($body);
                 // The body as sent: `{}` is a request with nothing in it.
                 if ($c->body === []) {
                     throw HttpError::badRequest(Client::EMPTY_UPDATE_MESSAGE, null, 'empty_update');

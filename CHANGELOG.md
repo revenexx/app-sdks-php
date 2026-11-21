@@ -11,16 +11,17 @@ it makes. Every write that answered before still answers.
 - **A record read and sent back with `PUT` is an edit.** `Crud::mount`'s `PUT`, and
   `Client::update()` / `updateIf()` for every patch, drop the fields a read carries
   when they repeat the record: the key and `tenant_id` (no UPDATE grant — the data
-  plane answered `401`), `updated_at` always, `created_at` naming the same instant,
-  a generated column or a column named in the new `readOnly` option equal to the
-  stored value. A value that contradicts the record is refused with `400
-  store_owned_field` (key, tenant) or `400 read_only_field` (the rest), naming it in
-  `details['field']`. When nothing is left nothing is written: `update()` and `PUT`
+  plane answered `401`; another value is `400 store_owned_field`, naming it in
+  `details['field']`), `updated_at` unless it is the only field (a touch still
+  writes), `created_at` naming the same instant (another one is written, as
+  before), every generated column, and a column named in the new `readOnly` option
+  equal to the stored value (another value is `400 read_only_field`). When nothing is left nothing is written: `update()` and `PUT`
   answer the record, `updateIf()` the record while its condition holds, else null. A
   body of `[]` is still `400 empty_update` (`data-client` AC-19, `crud-routes`
   AC-12).
-- **A trash column sent as null is dropped on a mounted route.** It is what a live
-  record reads; a value is still `400 read_only_field` (`crud-routes` AC-11).
+- **A trash column sent as null is dropped on a mounted route** while the record
+  holds null too — what a live record reads. A value, or null to a record in the
+  trash, is still `400 read_only_field` (`crud-routes` AC-11).
 - **`POST` refuses a key the store assigns and another tenant** with `400
   store_owned_field`; the request's tenant and null are dropped (`crud-routes` AC-13).
 - **The mock refuses an update naming the key or `tenant_id`** with the `401` the
