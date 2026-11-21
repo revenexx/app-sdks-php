@@ -277,7 +277,16 @@ final class MockAdapter implements Adapter, CountsRows, CreatesMany, EmitsEvents
     private function write(Entity $entity, int|string $id, array $cur, array $patch): array
     {
         $row = [...$cur, ...$patch];
-        if (isset($entity->columns['updated_at'])) {
+        // Baseline's trigger stamps updated_at when the row changes; a write of
+        // the values the row already holds stamps nothing.
+        $changed = false;
+        foreach ($patch as $k => $v) {
+            if (! \array_key_exists($k, $cur) || json_encode($v) !== json_encode($cur[$k])) {
+                $changed = true;
+                break;
+            }
+        }
+        if (isset($entity->columns['updated_at']) && $changed) {
             $row['updated_at'] = gmdate('c');
         }
         $this->store[$entity->name][$id] = $row;

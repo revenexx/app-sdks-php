@@ -54,7 +54,8 @@ final class RoundTrip
      * - `tenant_id`: equal to the record's → dropped; another → 400
      *   `store_owned_field`; null / '' → dropped. A record that does not carry
      *   its tenant cannot be compared, and the value is dropped.
-     * - `updated_at`: dropped, unless it is the only field sent — a touch, whose
+     * - `updated_at`: dropped, unless it is the only field left once the key and
+     *   the tenant are — a touch, whose
      *   write makes Baseline's trigger stamp the time. `created_at`: the same
      *   instant, in any offset → dropped; another instant is written (a
      *   correction). Both only when the entity declares them (or carries no
@@ -104,8 +105,9 @@ final class RoundTrip
             }
             unset($out['tenant_id']);
         }
-        // A patch of nothing but updated_at is a touch: the write is the point.
-        $touch = \count($patch) === 1 && \in_array((string) array_key_first($patch), self::STORE_STAMPED_COLUMNS, true);
+        // A patch of nothing but updated_at — once the key and the tenant that
+        // repeat the record are gone — is a touch: the write is the point.
+        $touch = \count($out) === 1 && \in_array((string) array_key_first($out), self::STORE_STAMPED_COLUMNS, true);
         foreach (self::STORE_STAMPED_COLUMNS as $field) {
             if (! $touch && \array_key_exists($field, $out) && self::declares($columns, $field)) {
                 unset($out[$field]);

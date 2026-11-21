@@ -878,10 +878,17 @@ final class ParityTest extends TestCase
             }
         } else {
             $app = new App(['name' => 'items']);
-            Crud::mount($app, $db, $e, ['path' => '/items', 'columns' => $r['entity']['columns'], 'readOnly' => $r['readOnly']]);
+            $parent = $case['parent'] ?? null;
+            $base = $parent !== null ? '/parents/' . $stored[$parent] . '/items' : '/items';
+            Crud::mount($app, $db, $e, [
+                'path' => $parent !== null ? '/parents/{parentId}/items' : '/items',
+                'columns' => $r['entity']['columns'],
+                'readOnly' => $r['readOnly'],
+                ...($parent !== null ? ['parent' => ['param' => 'parentId', 'column' => $parent]] : []),
+            ]);
             $res = $case['call'] === 'create'
-                ? FakeContext::call($app, 'POST', '/items', ['body' => $case['data'], 'headers' => ['x-revenexx-tenant' => $r['tenant']]])
-                : FakeContext::call($app, 'PUT', "/items/{$case['id']}", ['body' => $case['data'], 'headers' => ['x-revenexx-tenant' => $r['tenant']]]);
+                ? FakeContext::call($app, 'POST', $base, ['body' => $case['data'], 'headers' => ['x-revenexx-tenant' => $r['tenant']]])
+                : FakeContext::call($app, 'PUT', "{$base}/{$case['id']}", ['body' => $case['data'], 'headers' => ['x-revenexx-tenant' => $r['tenant']]]);
             $this->assertSame($want['status'], $res['status'], $res['raw']);
             if ($want['status'] >= 400) {
                 $this->assertSame($want['code'], $res['data']['code']);
@@ -942,5 +949,33 @@ final class ParityTest extends TestCase
             }
         }
         $this->assertSame($r['row'], $mock->get($e, 'r1'));
+    }
+
+    /** @return iterable<string, array{array<string, mixed>}> */
+    public static function mockStampCases(): iterable
+    {
+        if (! is_file(self::FIXTURE)) {
+            yield from self::absent(1);
+
+            return;
+        }
+        foreach (self::fixture()['round_trips']['mock_stamp'] as $case) {
+            yield $case['name'] => [$case];
+        }
+    }
+
+    /** @param array<string, mixed> $case */
+    #[Group('spec:runtime-parity:AC-9')]
+    #[Group('spec:runtime-parity')]
+    #[Group('spec:mock-fidelity:AC-1')]
+    #[Group('spec:mock-fidelity')]
+    #[DataProvider('mockStampCases')]
+    public function testTheMockStampsUpdatedAtAsTheTriggerDoes(array $case): void
+    {
+        self::requireFixture();
+        $r = self::fixture()['round_trips'];
+        $mock = AdapterRegistry::create('mock', ['seed' => ['items' => [$r['row']]]]);
+        $row = $mock->update(self::roundTripEntity(), 'r1', $case['data']);
+        $this->assertSame($case['stamps'], $row['updated_at'] !== $r['row']['updated_at'] && $row['updated_at'] !== ($case['data']['updated_at'] ?? null));
     }
 }

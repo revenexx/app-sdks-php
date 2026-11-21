@@ -13,7 +13,7 @@ it makes. Every write that answered before still answers.
   when they repeat the record: the key and `tenant_id` (no UPDATE grant — the data
   plane answered `401`; another value is `400 store_owned_field`, naming it in
   `details['field']`), `updated_at` unless it is the only field (a touch still
-  writes), `created_at` naming the same instant (another one is written, as
+  writes, nested routes included; a repeated key or tenant does not count), `created_at` naming the same instant (another one is written, as
   before), every generated column, and a column named in the new `readOnly` option
   equal to the stored value (another value is `400 read_only_field`). When nothing is left nothing is written: `update()` and `PUT`
   answer the record, `updateIf()` the record while its condition holds, else null. A

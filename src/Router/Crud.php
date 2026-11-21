@@ -165,8 +165,10 @@ final class Crud
                     return $c->json($row);
                 }
 
-                // Never let a body overwrite the nested-parent FK.
-                return $c->json($client->update($entity, $id, [...$fields, ...self::parentWhere($c, $parent)]));
+                // The body's parent column is gone and the row already belongs
+                // to the parent in the path, so the key is not written again:
+                // re-adding it would turn a touch into an unchanged-key write.
+                return $c->json($client->update($entity, $id, $fields));
             });
         }
 
