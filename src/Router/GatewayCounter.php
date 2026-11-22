@@ -22,6 +22,12 @@ use Revenexx\AppSdk\Settings;
  * not report `total` — is null, and `blocker` turns null into an
  * `unverifiable` blocker. Not knowing is never a pass.
  *
+ * One answer is a count without a list: `403` with the code
+ * `app_not_installed` says the owning App is not installed for this tenant, so
+ * nothing of it can point at the record, and the count is 0. Every other
+ * refusal, a plain `404` included, stays null: a wrong path must never read as
+ * "holds nothing".
+ *
  * Options: `endpoint` (default REVENEXX_GATEWAY_ENDPOINT or the platform
  * gateway), `timeoutMs` (5000), `env`, `transport` (tests).
  */
@@ -69,10 +75,13 @@ final class GatewayCounter
             $sep = str_contains($path, '?') ? '&' : '?';
             $answer = ($this->transport)($this->endpoint . $path . $sep . http_build_query($qs, '', '&', PHP_QUERY_RFC3986), $headers, $this->timeoutMs);
             $status = (int) ($answer['status'] ?? 0);
+            $body = json_decode((string) ($answer['body'] ?? ''), true);
+            if ($status === 403) {
+                return \is_array($body) && ($body['code'] ?? null) === 'app_not_installed' ? 0 : null;
+            }
             if ($status < 200 || $status >= 300) {
                 return null;
             }
-            $body = json_decode((string) ($answer['body'] ?? ''), true);
             $total = \is_array($body) && \is_array($body['page'] ?? null) ? ($body['page']['total'] ?? null) : null;
 
             return \is_int($total) ? $total : null;

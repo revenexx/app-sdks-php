@@ -387,6 +387,32 @@ final class TrashTest extends TestCase
         }
     }
 
+    // trash-routes AC-13 — An App the tenant does not have holds nothing
+    #[Group('spec:trash-routes:AC-13')]
+    #[Group('spec:trash-routes')]
+    public function testCountsZeroOnlyWhenTheGatewaySaysTheAppIsNotInstalled(): void
+    {
+        $answers = [
+            '/v1/mailings/mailings' => ['status' => 403, 'body' => '{"error":"app is not installed for this tenant","code":"app_not_installed"}'],
+            '/v1/journeys/journeys' => ['status' => 403, 'body' => '{"error":"api key scope does not permit this capability","code":"forbidden"}'],
+            '/v1/loyalty/acounts' => ['status' => 404, 'body' => '{"error":"no capability matches this route","code":"not_found"}'],
+            '/v1/ads/ads' => ['status' => 404, 'body' => '{"error":"nope","code":"app_not_installed"}'],
+            '/v1/reviews/reviews' => ['status' => 403, 'body' => ''],
+        ];
+        $refs = new GatewayCounter(['endpoint' => 'https://api.test', 'env' => [], 'transport' => static function (string $url) use ($answers): array {
+            return $answers[(string) parse_url($url, PHP_URL_PATH)];
+        }]);
+        $caller = ['x-revenexx-tenant' => 'acme', 'x-revenexx-context' => 'ctx'];
+
+        $this->assertSame(0, $refs->count($caller, '/v1/mailings/mailings', ['audience_id' => 'a1']));
+        $this->assertNull($refs->blocker($caller, ['path' => '/v1/mailings/mailings', 'where' => ['audience_id' => 'a1'], 'reason' => 'mailings']));
+        // Another refusal, a wrong path, the code under another status, no body: still no answer.
+        foreach (['/v1/journeys/journeys', '/v1/loyalty/acounts', '/v1/ads/ads', '/v1/reviews/reviews'] as $path) {
+            $this->assertNull($refs->count($caller, $path));
+            $this->assertSame('unverifiable', $refs->blocker($caller, ['path' => $path, 'reason' => 'references'])['code']);
+        }
+    }
+
     // trash-routes AC-11 — Named events are fired by the App
     #[Group('spec:trash-routes:AC-11')]
     #[Group('spec:trash-routes')]
