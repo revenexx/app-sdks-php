@@ -16,6 +16,7 @@ use Revenexx\AppSdk\Query;
 use Revenexx\AppSdk\Refusal;
 use Revenexx\AppSdk\Tests\Support\PlatformException;
 use Revenexx\AppSdk\Router\Actor;
+use Revenexx\AppSdk\Router\Answer;
 use Revenexx\AppSdk\Router\App;
 use Revenexx\AppSdk\Router\Crud;
 use Revenexx\AppSdk\Router\RouteContext;
@@ -425,7 +426,11 @@ final class ParityTest extends TestCase
         $this->assertSame([$case['status'], $case['code']], [$err->status, $err->errorCode]);
         // Only an unknown field names keys; a list is refused as a whole.
         $this->assertSame(
-            $case['code'] === 'unknown_field' ? ['unknown' => $case['unknown'], 'allowed' => self::fixture()['writes']['allowed']] : null,
+            match (true) {
+                $case['code'] === 'unknown_field' => ['unknown' => $case['unknown'], 'allowed' => self::fixture()['writes']['allowed']],
+                isset($case['field']) => ['field' => $case['field'], 'fields' => [$case['field']]],
+                default => null,
+            },
             $err->details,
         );
         if (isset($case['message'])) {
@@ -452,16 +457,18 @@ final class ParityTest extends TestCase
         $w = self::fixture()['writes'];
         $e = new Entity('accounts', 't_accounts', 'id', $w['columns'], ['list', 'get', 'create', 'update']);
 
-        // The client on the mock: refused writes change nothing.
+        // The client on the mock: refused writes change nothing. It answers
+        // `mock` where the fixture says the mock differs.
+        $onMock = [...$case, ...($case['mock'] ?? [])];
         $db = new Client(AdapterRegistry::create('mock', ['seed' => ['accounts' => $w['rows']]]), ['accounts' => $e]);
         try {
             $row = self::writeThrough($db, $e, $case);
-            $this->assertLessThan(400, $case['status'], 'expected a refusal');
+            $this->assertLessThan(400, $onMock['status'], 'expected a refusal');
             foreach ($case['data'] as $k => $v) {
                 $this->assertSame($v, $row[$k]);
             }
         } catch (HttpError $err) {
-            $this->assertWriteRefusal($err, $case);
+            $this->assertWriteRefusal($err, $onMock);
             $this->assertSame($w['rows'], $db->list($e));
         }
 
@@ -515,14 +522,14 @@ final class ParityTest extends TestCase
         $app = new App(['name' => 'accounts']);
         $app->post('/import', static fn ($c) => $c->json($db->create($e, $c->body), 201));
         $res = FakeContext::call($app, 'POST', '/import', ['body' => self::rawJson($case['data'])]);
-        $this->assertSame($case['status'], $res['status'], $res['raw']);
-        if (isset($case['code'])) {
-            $this->assertSame($case['code'], $res['data']['code']);
+        $this->assertSame($onMock['status'], $res['status'], $res['raw']);
+        if (isset($onMock['code'])) {
+            $this->assertSame($onMock['code'], $res['data']['code']);
         }
-        if (isset($case['message'])) {
-            $this->assertSame($case['message'], $res['data']['message']);
+        if (isset($onMock['message'])) {
+            $this->assertSame($onMock['message'], $res['data']['message']);
         }
-        if ($case['status'] >= 400) {
+        if ($onMock['status'] >= 400) {
             $this->assertSame($w['rows'], $db->list($e));
         }
     }
@@ -905,7 +912,8 @@ final class ParityTest extends TestCase
         if (\array_key_exists('write', $want) && $want['write'] === null) {
             $this->assertSame([], $writes);
             $answer = \array_key_exists('answer', $want) ? $want['answer'] : 'row';
-            $this->assertEquals($answer === 'row' ? $stored : null, $row);
+            // A route answers without `tenant_id` (router AC-9).
+            $this->assertEquals($answer === 'row' ? ($layer === 'route' ? Answer::withoutTenantId($stored) : $stored) : null, $row);
         } else {
             $this->assertEquals([$want['write']], $writes);
         }
@@ -977,5 +985,164 @@ final class ParityTest extends TestCase
         $mock = AdapterRegistry::create('mock', ['seed' => ['items' => [$r['row']]]]);
         $row = $mock->update(self::roundTripEntity(), 'r1', $case['data']);
         $this->assertSame($case['stamps'], $row['updated_at'] !== $r['row']['updated_at'] && $row['updated_at'] !== ($case['data']['updated_at'] ?? null));
+    }
+    /** @return iterable<string, array{array<string, mixed>, string}> */
+    public static function storeOwnedCases(): iterable
+    {
+        if (! is_file(self::FIXTURE)) {
+            yield 'parity cases not available' => [[], 'mock'];
+
+            return;
+        }
+        foreach (self::fixture()['store_owned_writes']['cases'] as $case) {
+            foreach (['mock', 'remote'] as $layer) {
+                if (isset($case[$layer])) {
+                    yield "{$layer}: {$case['name']}" => [$case, $layer];
+                }
+            }
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $case
+     * @return array<array-key, mixed>|null
+     */
+    private static function storeOwnedWrite(Client $db, Entity $e, array $case): ?array
+    {
+        return match ($case['call']) {
+            'create' => $db->create($e, $case['data']),
+            'createMany' => $db->createMany($e, $case['data']),
+            'update' => $db->update($e, $case['id'], $case['data']),
+            default => $db->updateIf($e, $case['id'], $case['where'], $case['data']),
+        };
+    }
+
+    /**
+     * A write the data plane refuses for want of a grant names the field.
+     *
+     * @param array<string, mixed> $case
+     */
+    // data-client AC-20 — A write the data plane refuses for the tenant or a store-assigned key names the field
+    // mock-fidelity AC-7 — A create naming the tenant or a store-assigned key fails as the grant makes it fail
+    #[Group('spec:data-client:AC-20')]
+    #[Group('spec:data-client')]
+    #[Group('spec:mock-fidelity:AC-7')]
+    #[Group('spec:mock-fidelity')]
+    #[Group('spec:runtime-parity:AC-9')]
+    #[Group('spec:runtime-parity')]
+    #[DataProvider('storeOwnedCases')]
+    public function testAWriteRefusedForAGrantNamesTheField(array $case, string $layer): void
+    {
+        self::requireFixture();
+        $o = self::fixture()['store_owned_writes'];
+        $def = $o['entities'][$case['entity']];
+        $e = new Entity($case['entity'], 't_items', $def['pk'], $def['columns'], ['list', 'get', 'create', 'update']);
+        $want = $case[$layer];
+        $refused = function (HttpError $err) use ($want): void {
+            $this->assertSame([$want['status'], $want['code']], [$err->status, $err->errorCode]);
+            if (isset($want['message'])) {
+                $this->assertSame($want['message'], $err->getMessage());
+            }
+            $this->assertSame(isset($want['field']) ? ['field' => $want['field'], 'fields' => [$want['field']]] : null, $err->details);
+        };
+
+        if ($layer === 'remote') {
+            $plane = $case['plane'] ?? $o['denied'];
+            $remote = new RemoteAdapter('http://pgrst:3000', transport: static fn (string $m, string $u, array $h, ?string $body): array => $m === 'GET'
+                ? ['status' => 200, 'body' => (string) json_encode($o['rows'])]
+                : ['status' => $plane['status'], 'body' => $plane['body']]);
+            try {
+                self::storeOwnedWrite(new Client($remote, [$case['entity'] => $e]), $e, $case);
+                $this->fail('expected the data plane to refuse the write');
+            } catch (HttpError $err) {
+                $refused($err);
+                // The diagnosis stays on the refusal, for the log.
+                $this->assertSame(json_decode($plane['body'], true)['code'], $err->serverDetail['sqlstate'] ?? null);
+            }
+
+            return;
+        }
+
+        // The mock adapter itself, called past the client, refuses as the grant does.
+        if (isset($case['adapter_columns'])) {
+            $mock = AdapterRegistry::create('mock', ['seed' => [$case['entity'] => $o['rows']]]);
+            try {
+                $case['call'] === 'createMany' ? $mock->createMany($e, $case['data']) : $mock->create($e, $case['data']);
+                $this->fail('expected the grant to refuse the write');
+            } catch (HttpError $err) {
+                $this->assertSame([401, 'bad_request', 'unauthenticated'], [$err->status, $err->errorCode, $err->getMessage()]);
+                $this->assertSame(['42501', $case['adapter_columns']], [$err->serverDetail['sqlstate'] ?? null, $err->serverDetail['columns'] ?? null]);
+            }
+            $this->assertSame($o['rows'], $mock->list($e));
+        }
+
+        $db = new Client(AdapterRegistry::create('mock', ['seed' => [$case['entity'] => $o['rows']]]), [$case['entity'] => $e]);
+        try {
+            self::storeOwnedWrite($db, $e, $case);
+            $this->assertLessThan(400, $want['status'], 'expected a refusal');
+            $this->assertCount(\count($o['rows']) + ($case['call'] === 'createMany' ? \count($case['data']) : 1), $db->list($e));
+        } catch (HttpError $err) {
+            $refused($err);
+            $this->assertSame($o['rows'], $db->list($e));
+        }
+        if ($case['call'] !== 'create') {
+            return;
+        }
+
+        // A hand-written handler that creates from the body answers the same.
+        $db = new Client(AdapterRegistry::create('mock', ['seed' => [$case['entity'] => $o['rows']]]), [$case['entity'] => $e]);
+        $app = new App(['name' => 'items']);
+        $app->post('/import', static fn ($c) => $c->json($db->create($e, $c->body), 201));
+        $res = FakeContext::call($app, 'POST', '/import', ['body' => self::rawJson($case['data'])]);
+        $this->assertSame($want['status'], $res['status'], $res['raw']);
+        if ($want['status'] >= 400) {
+            $this->assertSame(
+                [$want['code'], $want['message'], ['field' => $want['field'], 'fields' => [$want['field']]]],
+                [$res['data']['code'], $res['data']['message'], $res['data']['details']],
+            );
+        }
+    }
+
+    /** @return iterable<string, array{mixed, mixed, string}> */
+    public static function answerCases(): iterable
+    {
+        if (! is_file(self::FIXTURE)) {
+            yield 'parity cases not available' => [null, null, 'arrays'];
+
+            return;
+        }
+        // Decoded as objects, so an empty object stays `{}` in the expected JSON.
+        $fixture = json_decode((string) file_get_contents(self::FIXTURE), false, flags: JSON_THROW_ON_ERROR);
+        foreach ($fixture->answers->cases as $case) {
+            foreach (['arrays', 'objects'] as $as) {
+                yield "{$as}: {$case->name}" => [$case->data, $case->answer, $as];
+            }
+        }
+    }
+
+    /**
+     * `$c->json()` leaves `tenant_id` out at any depth; an App created with
+     * `answerTenantId` answers as given. The handler's data is the case's,
+     * decoded as arrays or as objects; the JSON text is compared.
+     */
+    // router AC-9 — An answer carries no tenant_id at any depth
+    // router AC-10 — An App that must answer tenant_id says so
+    #[Group('spec:router:AC-9')]
+    #[Group('spec:router:AC-10')]
+    #[Group('spec:router')]
+    #[Group('spec:runtime-parity:AC-9')]
+    #[Group('spec:runtime-parity')]
+    #[DataProvider('answerCases')]
+    public function testAnAnswerLeavesTheTenantOut(mixed $data, mixed $answer, string $as): void
+    {
+        self::requireFixture();
+        $given = $as === 'arrays' ? json_decode((string) json_encode($data), true) : $data;
+        $encode = static fn (mixed $v): string => (string) json_encode($v, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION);
+        foreach ([[[], $answer], [['answerTenantId' => true], $data]] as [$options, $want]) {
+            $app = new App(['name' => 'items', ...$options]);
+            $app->get('/items', static fn ($c) => $c->json($given));
+            $res = FakeContext::call($app, 'GET', '/items');
+            $this->assertSame($encode($want), $res['raw']);
+        }
     }
 }

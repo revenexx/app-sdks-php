@@ -105,7 +105,9 @@ final class Client
         $entity->assertKnownFields($data);
         Entity::assertCreatable($data);
 
-        return $this->adapter->create($entity, $data);
+        // A refusal of the tenant or a store-assigned key names the field
+        // ({@see RoundTrip::storeOwnedRefusal()}), not "unauthenticated".
+        return $this->namingStoreOwned($entity, $data, fn (): array => $this->adapter->create($entity, $data));
     }
 
     /**
@@ -126,7 +128,9 @@ final class Client
             throw new \RuntimeException("{$entity->name}.createMany() is not supported by the '{$this->adapter->kind()}' adapter");
         }
 
-        return $this->adapter->createMany($entity, $records);
+        $adapter = $this->adapter;
+
+        return $this->namingStoreOwned($entity, $records, static fn (): array => $adapter->createMany($entity, $records));
     }
 
     /**
@@ -159,7 +163,24 @@ final class Client
             return $stored() ?? throw HttpError::notFound();
         }
 
-        return $this->adapter->update($entity, $id, $write);
+        return $this->namingStoreOwned($entity, $write, fn (): array => $this->adapter->update($entity, $id, $write));
+    }
+
+    /**
+     * Run a write, answering a grant refusal of `tenant_id` or the key by name.
+     *
+     * @template T
+     * @param array<array-key, mixed> $body
+     * @param callable(): T $write
+     * @return T
+     */
+    private function namingStoreOwned(Entity $entity, array $body, callable $write): mixed
+    {
+        try {
+            return $write();
+        } catch (HttpError $err) {
+            throw RoundTrip::storeOwnedRefusal($entity->pk, $body, $err) ?? $err;
+        }
     }
 
     /**
@@ -226,7 +247,9 @@ final class Client
             return $rows[0] ?? null;
         }
 
-        return $this->adapter->updateIf($entity, $id, $where, $write);
+        $adapter = $this->adapter;
+
+        return $this->namingStoreOwned($entity, $write, static fn (): ?array => $adapter->updateIf($entity, $id, $where, $write));
     }
 
     public function remove(Entity $entity, int|string $id): void

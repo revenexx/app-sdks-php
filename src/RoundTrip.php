@@ -233,6 +233,45 @@ final class RoundTrip
     }
 
     /**
+     * A write the data plane refused for want of a grant, naming the field it
+     * was refused for.
+     *
+     * Baseline grants no INSERT on `tenant_id`, nor on a key the store assigns,
+     * and no UPDATE on either. Postgres refuses a write naming such a column
+     * with SQLSTATE 42501, which PostgREST answers 401/403 and the adapters map
+     * to `bad_request` "unauthenticated". When the refused write named
+     * `tenant_id` or the key, the refusal is `400 store_owned_field` naming it,
+     * as `Crud::mount` answers before the request. `tenant_id` is named first:
+     * it is never granted, while a key may be. Any other 42501 keeps its
+     * mapping; null when `$err` is not such a refusal. Same rule as the
+     * JavaScript SDK.
+     *
+     * @param array<array-key, mixed> $body one record, or a list of them
+     */
+    public static function storeOwnedRefusal(string $pk, array $body, HttpError $err): ?HttpError
+    {
+        $detail = $err->serverDetail;
+        if (! \is_array($detail) || ($detail['sqlstate'] ?? null) !== '42501') {
+            return null;
+        }
+        $records = array_is_list($body) && $body !== [] && \is_array($body[0]) ? $body : [$body];
+        $pk = $pk !== '' ? $pk : 'id';
+        foreach (array_unique(['tenant_id', $pk]) as $field) {
+            foreach ($records as $record) {
+                if (\is_array($record) && \array_key_exists($field, $record)) {
+                    $message = $field === 'tenant_id'
+                        ? "'tenant_id' is the tenant of the request and cannot be written"
+                        : "'{$field}' is assigned by the store and cannot be written";
+
+                    return new HttpError(400, $message, ['field' => $field, 'fields' => [$field]], self::STORE_OWNED_FIELD, $detail);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * The stored generated columns (`generated` in schema.json), sorted.
      *
      * @param array<string, mixed> $columns

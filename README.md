@@ -211,7 +211,7 @@ return $app->handle($context);
 | `$c->header($name)` | any request header |
 | `$c->actor` | who is acting |
 | `$c->settings()` | the App's settings for this request |
-| `$c->json($data, $status)` | the answer |
+| `$c->json($data, $status)` | the answer, without `tenant_id` (see below) |
 | `$c->log($message)` | the function log |
 
 Routing rules:
@@ -220,6 +220,14 @@ Routing rules:
   `/markets/{id}`.
 - An unknown path answers `404`; a known path with the wrong method answers `405`.
 - `GET /` answers the App's name and its routes, as a health check.
+
+An answer never carries `tenant_id`: `$c->json()` leaves the key out at any depth —
+records, lists, envelopes, embedded relations — and so does every `Crud::mount` and
+`Trash::mount` route. An object left with no key is answered as `{}`. A value
+`"tenant_id"` and keys that only resemble it are kept, and the request body is not
+touched. An App whose answer has to name the tenant opts out for all its routes with
+`new App(['name' => '…', 'answerTenantId' => true])`. The walk is
+`Router\Answer::withoutTenantId($value)`, for code that answers some other way.
 
 ### One-line CRUD
 
@@ -343,6 +351,7 @@ The data client raises `HttpError`s itself:
 | an operation the manifest does not grant | 403 | `not_permitted` |
 | an update with nothing to update | 400 | `empty_update` |
 | an update naming another key or tenant than the record's | 400 | `store_owned_field` |
+| a write the data plane refuses for want of a grant (42501) that names `tenant_id` or the key — `details['field']` names it, `tenant_id` first | 400 | `store_owned_field` |
 | a `Crud::mount` `PUT` changing a `readOnly` column | 400 | `read_only_field` |
 | a create with nothing to create (`[]`) | 400 | `empty_create` |
 | `updateIf` without a condition | 400 | `empty_condition` |
@@ -469,7 +478,9 @@ $answer = $app->handle($context);   // ['body' => '{"id":"…","code":"de",…}'
 ```
 
 Keep the route setup in one function that both `main.php` and your tests call, so the
-tests run the routes production runs. For `Settings`, pass a `transport` callable to
+tests run the routes production runs. The mock refuses a create naming `tenant_id` or a
+key the store assigns as production's grants do, so through the client such a write is
+the same `400 store_owned_field` in a test. For `Settings`, pass a `transport` callable to
 answer without a network:
 
 ```php

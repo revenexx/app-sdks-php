@@ -12,6 +12,7 @@ use Revenexx\AppSdk\EmitTarget;
 use Revenexx\AppSdk\Entity;
 use Revenexx\AppSdk\Query;
 use Revenexx\AppSdk\RecordsEvents;
+use Revenexx\AppSdk\RoundTrip;
 use Revenexx\AppSdk\CreatesMany;
 use Revenexx\AppSdk\UpdatesConditionally;
 
@@ -164,6 +165,7 @@ final class MockAdapter implements Adapter, CountsRows, CreatesMany, EmitsEvents
         $entity->assertKnownFields($data);
         // A row of defaults from nothing is what production refuses too.
         Entity::assertCreatable($data);
+        self::assertInsertableColumns($entity, [$data]);
         $row = $this->applyDefaults($entity, $data);
         if (! isset($row[$entity->pk])) {
             $row[$entity->pk] = self::uuid();
@@ -183,7 +185,9 @@ final class MockAdapter implements Adapter, CountsRows, CreatesMany, EmitsEvents
     public function createMany(Entity $entity, array $rows): array
     {
         $out = [];
-        foreach ($entity->bulkRecords($rows) as $record) {
+        $records = $entity->bulkRecords($rows);
+        self::assertInsertableColumns($entity, $records);
+        foreach ($records as $record) {
             $row = $this->applyDefaults($entity, $record);
             if (! isset($row[$entity->pk])) {
                 $row[$entity->pk] = self::uuid();
@@ -237,6 +241,43 @@ final class MockAdapter implements Adapter, CountsRows, CreatesMany, EmitsEvents
         }
 
         return $this->write($entity, $id, $cur, $patch);
+    }
+
+    /**
+     * Baseline grants no INSERT on `tenant_id` — the data plane writes the
+     * tenant — nor on a key the store assigns (serial, or default
+     * gen_random_uuid()), so PostgREST answers a POST naming either, even as
+     * null, with SQLSTATE 42501. The mock refuses them as the remote adapter
+     * reports it, and the client names the field (`400 store_owned_field`) for
+     * both adapters alike. A key the caller assigns is granted and written.
+     * Seeded rows are not writes. Same rule as the JavaScript mock.
+     *
+     * @param list<array<string, mixed>> $records
+     */
+    private static function assertInsertableColumns(Entity $entity, array $records): void
+    {
+        $pk = $entity->pk !== '' ? $entity->pk : 'id';
+        $candidates = RoundTrip::storeAssignsKey($pk, $entity->columns) ? ['tenant_id', $pk] : ['tenant_id'];
+        $refused = [];
+        foreach (array_unique($candidates) as $k) {
+            foreach ($records as $record) {
+                if (\is_array($record) && \array_key_exists($k, $record)) {
+                    $refused[] = $k;
+                    break;
+                }
+            }
+        }
+        if ($refused === []) {
+            return;
+        }
+        sort($refused, SORT_STRING);
+
+        throw new HttpError(401, 'unauthenticated', null, 'bad_request', [
+            'source' => 'mock',
+            'entity' => $entity->name,
+            'sqlstate' => '42501',
+            'columns' => $refused,
+        ]);
     }
 
     /**

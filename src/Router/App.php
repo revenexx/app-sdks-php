@@ -29,7 +29,13 @@ final class App
     private Settings $settings;
 
     /**
-     * @param array{name?: string, health?: bool, healthExtra?: callable(): array<string, mixed>, settings?: array<string, mixed>|Settings, env?: array<string, string|false|null>} $options
+     * `answerTenantId`: answer `tenant_id` where a handler's answer carries it.
+     * Off by default — `$c->json()` leaves the key out at any depth, because the
+     * caller already named its tenant to reach this data ({@see Answer}). Turn it
+     * on only for an App whose answer has to name the tenant; it applies to
+     * every route.
+     *
+     * @param array{name?: string, health?: bool, healthExtra?: callable(): array<string, mixed>, settings?: array<string, mixed>|Settings, env?: array<string, string|false|null>, answerTenantId?: bool} $options
      */
     public function __construct(private readonly array $options = [])
     {
@@ -187,7 +193,10 @@ final class App
                 contextToken: $token,
                 actor: Actor::fromHeaders(static fn (string $n): string => $headers[$n] ?? ''),
                 settingsReader: $this->settings,
-                respond: \Closure::fromCallable($respond),
+                // A handler's answer leaves `tenant_id` out unless the App opts out.
+                respond: ($this->options['answerTenantId'] ?? false) === true
+                    ? \Closure::fromCallable($respond)
+                    : static fn (mixed $data, int $status = 200): mixed => $respond(Answer::withoutTenantId($data), $status),
                 logger: \Closure::fromCallable($log),
             );
 

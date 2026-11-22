@@ -5,8 +5,31 @@ All notable changes to `revenexx/app-sdk` are listed here. The package follows
 
 ## Unreleased
 
-The next release is **2.2.0**: a record read and sent back is written as the change
-it makes. Every write that answered before still answers.
+The next release is **2.3.0**: an answer never carries `tenant_id`, and a write
+refused for the tenant or the key names it.
+
+- **`$c->json()` leaves `tenant_id` out of every answer, at any depth** — records,
+  lists, envelopes and embedded relations, and therefore every `Crud::mount` and
+  `Trash::mount` route. Arrays, objects and `JsonSerializable`s are walked; an object
+  left with no key is answered as `{}`, never `[]`. A value `"tenant_id"` and keys that
+  only resemble it are kept, and the request body is not touched. An App whose answer
+  has to name the tenant opts out for all its routes with `new App(['answerTenantId'
+  => true])`. The walk is `Router\Answer::withoutTenantId()` (`router` AC-9, AC-10).
+- **A write refused for want of a grant names `tenant_id` or the key.** When the data
+  plane refuses `create()`, `createMany()`, `update()` or `updateIf()` with SQLSTATE
+  42501 and the write names `tenant_id` or the primary key, the refusal is `400
+  store_owned_field` naming it in `details['field']` (`tenant_id` first), as
+  `Crud::mount`'s `POST` answers. It was `401` "unauthenticated". Any other refusal
+  keeps its answer; a key the caller assigns is granted and unaffected
+  (`data-client` AC-20).
+- **The mock refuses a create naming `tenant_id` or a key the store assigns**, even as
+  null, with the `401` the grant makes production answer, so through the client a test
+  sees the same `400` (`mock-fidelity` AC-7).
+
+## 2.2.0
+
+A record read and sent back is written as the change it makes. Every write that
+answered before still answers.
 
 - **A record read and sent back with `PUT` is an edit.** `Crud::mount`'s `PUT`, and
   `Client::update()` / `updateIf()` for every patch, drop the fields a read carries
