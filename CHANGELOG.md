@@ -15,8 +15,9 @@ the status and code of a refusal (`docs/versioning.md`).
   The client strips at the row level: the value of a `json` / `jsonb` column is
   returned as stored, its own `tenant_id` included, so a record read and sent back
   writes its documents back as they were. The rules that compare against the stored
-  tenant read the adapter's row, so a `PUT` naming another tenant is still `400
-  store_owned_field`. An answer a handler builds itself is written as given. An App
+  tenant read the adapter's row, and `Crud::mount`'s `PUT` settles a body's
+  `tenant_id` against the request's tenant without handing it on: the request's
+  tenant is dropped, another is still `400 store_owned_field` (`crud-routes` AC-14). An answer a handler builds itself is written as given. An App
   whose code has to read the tenant from a row creates the client with
   `keepTenantId: true`. `Tenant::withoutTenantId()` strips rows read past the client,
   shallowly (`data-client` AC-21 to AC-24).

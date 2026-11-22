@@ -151,8 +151,16 @@ does every embedded relation row the `select` names, at any depth. The `Crud::mo
 and `Trash::mount` routes answer these rows. A stored document is returned as stored:
 the value of a `json` / `jsonb` column keeps its own `tenant_id`, so a record read and
 sent back writes it back as it was. The rules that compare against the stored tenant
-read the row from the adapter. An App whose code has to read the tenant from a row
-creates its client with `new Client($adapter, $entities, keepTenantId: true)`.
+read the row from the adapter, and `Crud::mount`'s `PUT` settles a body's `tenant_id`
+against the request's tenant: the request's own is dropped, another is `400
+store_owned_field`. An App whose code has to read the tenant from a row
+creates a second client for it — the option holds for every entity of the client:
+
+```php
+$client = new Client($adapter, Db::entities());                            // rows without tenant_id
+$withTenant = new Client($adapter, Db::entities(), keepTenantId: true);    // only where the tenant is read
+```
+
 `Tenant::withoutTenantId($rowOrRows)` does the same, shallowly, for rows read past the
 client.
 

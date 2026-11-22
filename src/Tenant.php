@@ -28,15 +28,25 @@ final class Tenant
     /**
      * A record, or each record of a list, without its top-level `tenant_id`.
      * Shallow on purpose: for rows an App gets past the data client, which it
-     * knows to be records. Nested values are left as they are.
+     * knows to be records. Nested values are left as they are. A record left
+     * with no key is `{}`.
      */
     public static function withoutTenantId(mixed $rows): mixed
     {
         if (\is_array($rows) && array_is_list($rows) && $rows !== []) {
-            return array_map(static fn (mixed $row): mixed => self::readRow($row, []), $rows);
+            return array_map(static fn (mixed $row): mixed => self::asObject(self::readRow($row, []), $row), $rows);
         }
 
-        return self::readRow($rows, []);
+        return self::asObject(self::readRow($rows, []), $rows);
+    }
+
+    /**
+     * A record the strip emptied, as `{}` rather than `[]` — what it encodes
+     * to in JavaScript. A record that was empty to begin with stays as given.
+     */
+    private static function asObject(mixed $stripped, mixed $given): mixed
+    {
+        return $stripped === [] && \is_array($given) && \array_key_exists(self::KEY, $given) ? new \stdClass() : $stripped;
     }
 
     /**
@@ -118,7 +128,10 @@ final class Tenant
             if (! \is_array($item)) {
                 continue;
             }
-            $row[$key] = array_is_list($item) ? self::readRows($item, $nested) : self::readRow($item, $nested);
+            // An embedded row the strip emptied encodes as `{}`, as in JavaScript.
+            $row[$key] = array_is_list($item)
+                ? array_map(static fn (mixed $r): mixed => self::asObject(self::readRow($r, $nested), $r), $item)
+                : self::asObject(self::readRow($item, $nested), $item);
         }
 
         return $row;

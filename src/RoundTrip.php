@@ -214,6 +214,31 @@ final class RoundTrip
     }
 
     /**
+     * A body's `tenant_id` on an update, settled against the request's tenant
+     * when the row just read does not carry one — the client returns rows
+     * without it. The request's tenant, null or '' say nothing ({@see
+     * self::update()} drops them); another tenant is `400 store_owned_field`,
+     * as a create refuses it. Without a request tenant the value is dropped. A
+     * row that carries its tenant is compared by {@see self::update()}. Same
+     * rule as the JavaScript SDK.
+     *
+     * @param array<string, mixed>      $body
+     * @param array<string, mixed>|null $row
+     */
+    public static function assertRequestTenant(array $body, ?array $row, ?string $tenant): void
+    {
+        if (! \array_key_exists('tenant_id', $body) || ($row !== null && \array_key_exists('tenant_id', $row))) {
+            return;
+        }
+        if (self::noValue($body['tenant_id']) || self::noValue($tenant)) {
+            return;
+        }
+        if ((string) $body['tenant_id'] !== (string) $tenant) {
+            throw self::storeOwned('tenant_id', self::TENANT_CHANGED);
+        }
+    }
+
+    /**
      * Whether the store assigns the key on create: a serial / smallserial /
      * bigserial key, an identity key (`generated … as identity`, or `identity`
      * in the descriptor), or one whose default draws it — gen_random_uuid(),

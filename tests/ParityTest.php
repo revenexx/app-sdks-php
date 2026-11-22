@@ -1199,6 +1199,53 @@ final class ParityTest extends TestCase
         self::requireFixture();
         [$e] = self::clientReadsEntity();
         $db = new Client(self::clientReadsPlane($case['rows']), ['items' => $e]);
-        $this->assertSame($case['answer'], $db->list($e, ['select' => $case['select']]));
+        // Compared as JSON, so an emptied embedded row is `{}`, as in JavaScript.
+        $fixture = json_decode((string) file_get_contents(self::FIXTURE), false, flags: JSON_THROW_ON_ERROR);
+        $want = null;
+        foreach ($fixture->client_reads->embeds as $embed) {
+            if ($embed->name === $case['name']) {
+                $want = $embed->answer;
+            }
+        }
+        $this->assertSame((string) json_encode($want), (string) json_encode($db->list($e, ['select' => $case['select']])));
+    }
+    /** @return iterable<string, array{array<string, mixed>}> */
+    public static function putTenantCases(): iterable
+    {
+        if (! is_file(self::FIXTURE)) {
+            yield from self::absent(1);
+
+            return;
+        }
+        foreach (self::fixture()['put_tenant']['cases'] as $case) {
+            // `Crud::mount` takes the client only.
+            if ($case['repo'] === 'client') {
+                yield $case['name'] => [$case];
+            }
+        }
+    }
+
+    /** @param array<string, mixed> $case */
+    // crud-routes AC-14 — A PUT naming tenant_id is settled against the request's tenant
+    #[Group('spec:crud-routes:AC-14')]
+    #[Group('spec:crud-routes')]
+    #[Group('spec:runtime-parity:AC-9')]
+    #[Group('spec:runtime-parity')]
+    #[DataProvider('putTenantCases')]
+    public function testAPutNamingTheTenantIsSettledAgainstTheRequest(array $case): void
+    {
+        self::requireFixture();
+        $t = self::fixture()['put_tenant'];
+        $e = new Entity('items', 't_items', 'id', $t['columns'], ['list', 'get', 'update']);
+        $app = new App(['name' => 'items']);
+        Crud::mount($app, new Client(AdapterRegistry::create('mock', ['seed' => ['items' => [$t['row']]]]), ['items' => $e]), $e, ['path' => '/items']);
+        $res = FakeContext::call($app, 'PUT', '/items/r1', ['body' => $case['data'], 'headers' => ['x-revenexx-tenant' => $t['tenant']]]);
+        $this->assertSame($case['status'], $res['status'], $res['raw']);
+        if (isset($case['code'])) {
+            $this->assertSame($case['code'], $res['data']['code']);
+        }
+        if (isset($case['answer'])) {
+            $this->assertSame($case['answer'], $res['data']);
+        }
     }
 }
