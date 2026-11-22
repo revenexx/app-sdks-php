@@ -3,9 +3,9 @@
 All notable changes to `revenexx/app-sdk` are listed here. The package follows
 [semantic versioning](https://semver.org).
 
-## Unreleased — 3.0.0
+## 3.0.0
 
-The next release is **3.0.0**, a major: it changes what a mounted route answers and
+A major release: it changes what a mounted route answers and
 the status and code of a refusal (`docs/versioning.md`).
 
 - **Breaking — rows the `Client` returns carry no `tenant_id`.** `get()`, `list()`,
