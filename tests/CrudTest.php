@@ -212,8 +212,9 @@ final class CrudTest extends TestCase
 
         $bad = FakeContext::call($app, 'GET', '/markets', ['query' => 'currency=USD&organization_id=o1&bogus=x']);
         $this->assertSame([400, 'unknown_filter'], [$bad['status'], $bad['data']['code']]);
-        $this->assertSame(['organization_id', 'bogus'], $bad['data']['details']['unknown']);
-        $this->assertSame(['code', 'created_at', 'currency', 'id', 'labels', 'limit', 'offset', 'order'], $bad['data']['details']['allowed']);
+        // Only the offending keys: the accepted ones are column names a storefront must not learn.
+        $this->assertSame(['unknown' => ['organization_id', 'bogus']], $bad['data']['details']);
+        $this->assertStringNotContainsString('details.allowed', $bad['data']['error']);
         $this->assertStringContainsString("'organization_id'", $bad['data']['error']);
 
         $paged = FakeContext::call($app, 'GET', '/markets', ['query' => 'limit=1&offset=1&order=code.desc']);
@@ -236,12 +237,12 @@ final class CrudTest extends TestCase
         $this->assertSame([200, ['currency' => 'EUR'], 1], [$ok['status'], $ok['data']['filter'], $ok['data']['page']['total']]);
         $bad = FakeContext::call($app, 'GET', '/markets', ['query' => 'include_archived=true']);
         $this->assertSame(400, $bad['status']);
-        $this->assertContains('include_inactive', $bad['data']['details']['allowed']);
+        $this->assertSame(['unknown' => ['include_archived']], $bad['data']['details']);
 
         $bare = new App();
         Crud::mount($bare, $db, $e, ['path' => '/markets', 'columns' => [], 'queryParams' => ['q']]);
         $this->assertSame(200, FakeContext::call($bare, 'GET', '/markets', ['query' => 'limit=5&q=x'])['status']);
-        $this->assertSame(['currency'], FakeContext::call($bare, 'GET', '/markets', ['query' => 'currency=EUR'])['data']['details']['unknown']);
+        $this->assertSame(['unknown' => ['currency']], FakeContext::call($bare, 'GET', '/markets', ['query' => 'currency=EUR'])['data']['details']);
     }
 
     // list-filters AC-5 — An operator in a filter value is refused

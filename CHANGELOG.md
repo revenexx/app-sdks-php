@@ -3,6 +3,21 @@
 All notable changes to `revenexx/app-sdk` are listed here. The package follows
 [semantic versioning](https://semver.org).
 
+## 3.1.0
+
+It removes a field from two refusals and keeps their status and code.
+
+- **`unknown_field` and `unknown_filter` name only the offending keys.** Both refusals
+  answered the keys that would have been accepted in `details['allowed']`, and a
+  mounted route handed that list to its caller — a storefront learned every column
+  name of a resource from one wrong key. `details['allowed']` is gone:
+  `400 unknown_field` (from `create()`, `createMany()`, `update()` and `updateIf()`)
+  answers `details['unknown']`, with `details['index']` for a record of
+  `createMany()` as before, and `400 unknown_filter` (from `Crud::mount`'s list)
+  answers `details['unknown']`. The messages no longer point at `details.allowed`.
+  `details` is part of a refusal's answer; this is a minor by decision, since no App
+  reads the field (`docs/versioning.md`).
+
 ## 3.0.0
 
 A major release: it changes what a mounted route answers and

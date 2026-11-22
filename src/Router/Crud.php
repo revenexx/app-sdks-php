@@ -205,14 +205,12 @@ final class Crud
         if ($unknown === []) {
             return;
         }
-        $allowed = array_values(array_unique([...array_map('strval', array_keys($columns)), ...$flagColumns, ...self::RESERVED_LIST_QUERY_KEYS, ...$extra]));
-        sort($allowed);
         $quoted = implode(', ', array_map(static fn (string $k): string => "'{$k}'", $unknown));
 
         throw new HttpError(
             400,
-            "unknown list filter {$quoted} — not a column of this resource. A filter that cannot be applied is refused rather than ignored; see details.allowed.",
-            ['unknown' => $unknown, 'allowed' => $allowed],
+            "unknown list filter {$quoted} — not a column of this resource. A filter that cannot be applied is refused rather than ignored.",
+            ['unknown' => $unknown],
             'unknown_filter',
         );
     }

@@ -174,8 +174,8 @@ final class Entity
 
                 throw HttpError::badRequest(
                     "unknown field{$plural} {$quoted} in record {$index} — not a column of '{$this->name}'. "
-                        . 'A field that cannot be written is refused rather than dropped; see details.allowed.',
-                    ['index' => $index, 'unknown' => $unknown, 'allowed' => $this->writableColumns()],
+                        . 'A field that cannot be written is refused rather than dropped.',
+                    ['index' => $index, 'unknown' => $unknown],
                     'unknown_field',
                 );
             }
@@ -308,13 +308,12 @@ final class Entity
             return;
         }
         $quoted = implode(', ', array_map(static fn (string $k): string => "'{$k}'", $unknown));
-        $allowed = $this->writableColumns();
         $plural = \count($unknown) > 1 ? 's' : '';
 
         throw HttpError::badRequest(
             "unknown field{$plural} {$quoted} — not a column of '{$this->name}'. "
-                . 'A field that cannot be written is refused rather than dropped; see details.allowed.',
-            ['unknown' => $unknown, 'allowed' => $allowed],
+                . 'A field that cannot be written is refused rather than dropped.',
+            ['unknown' => $unknown],
             'unknown_field',
         );
     }

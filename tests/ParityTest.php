@@ -272,11 +272,11 @@ final class ParityTest extends TestCase
             // An empty filter is an object on the wire, as in JavaScript — never a list.
             self::assertStringContainsString('"filter":{', $res['raw']);
         }
-        if (isset($case['unknown'])) {
+        // An unknown filter names only the offending keys, never the accepted ones.
+        if (($case['code'] ?? null) === 'unknown_filter') {
+            self::assertSame(['unknown' => $case['unknown']], $res['data']['details']);
+        } elseif (isset($case['unknown'])) {
             self::assertSame($case['unknown'], $res['data']['details']['unknown']);
-        }
-        if (isset($case['allowed'])) {
-            self::assertSame($case['allowed'], $res['data']['details']['allowed']);
         }
         if (isset($case['parameter'])) {
             self::assertSame($case['parameter'], $res['data']['details']['parameter']);
@@ -427,7 +427,7 @@ final class ParityTest extends TestCase
         // Only an unknown field names keys; a list is refused as a whole.
         $this->assertSame(
             match (true) {
-                $case['code'] === 'unknown_field' => ['unknown' => $case['unknown'], 'allowed' => self::fixture()['writes']['allowed']],
+                $case['code'] === 'unknown_field' => ['unknown' => $case['unknown']],
                 isset($case['field']) => ['field' => $case['field'], 'fields' => [$case['field']]],
                 default => null,
             },
@@ -591,7 +591,7 @@ final class ParityTest extends TestCase
         $e = $entities[$case['entity']];
         $refused = function (HttpError $err) use ($case, $f): void {
             $this->assertSame([$case['status'], $case['code']], [$err->status, $err->errorCode]);
-            $this->assertSame(['unknown' => $case['unknown'], 'allowed' => $f['entities'][$case['entity']]['allowed']], $err->details);
+            $this->assertSame(['unknown' => $case['unknown']], $err->details);
             if (isset($case['message'])) {
                 $this->assertSame($case['message'], $err->getMessage());
             }
@@ -641,7 +641,7 @@ final class ParityTest extends TestCase
         if ($want['status'] >= 400) {
             $this->assertSame($want['code'], $res['data']['code']);
             $this->assertSame(
-                isset($case['route']) ? ['fields' => $case['route']['fields']] : ['unknown' => $case['unknown'], 'allowed' => $f['entities'][$case['entity']]['allowed']],
+                isset($case['route']) ? ['fields' => $case['route']['fields']] : ['unknown' => $case['unknown']],
                 $res['data']['details'],
             );
             $this->assertSame($f['rows'], $db->list($e));
@@ -703,11 +703,9 @@ final class ParityTest extends TestCase
         if (isset($case['filter'])) {
             $this->assertSame($case['filter'], $res['data']['filter']);
         }
-        if (isset($case['unknown'])) {
-            $this->assertSame($case['unknown'], $res['data']['details']['unknown']);
-        }
-        if (isset($case['allowed'])) {
-            $this->assertSame($case['allowed'], $res['data']['details']['allowed']);
+        // An unknown filter names only the offending keys, never the columns a flag adds.
+        if (($case['code'] ?? null) === 'unknown_filter') {
+            $this->assertSame(['unknown' => $case['unknown']], $res['data']['details']);
         }
     }
 
@@ -744,7 +742,7 @@ final class ParityTest extends TestCase
             }
             $at = isset($case['index']) ? ['index' => $case['index']] : [];
             $this->assertSame(
-                $case['code'] === 'unknown_field' ? [...$at, 'unknown' => $case['unknown'], 'allowed' => $b['allowed']] : ($at !== [] ? $at : null),
+                $case['code'] === 'unknown_field' ? [...$at, 'unknown' => $case['unknown']] : ($at !== [] ? $at : null),
                 $err->details,
             );
             if (isset($case['message'])) {

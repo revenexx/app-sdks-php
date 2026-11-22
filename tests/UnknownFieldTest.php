@@ -67,8 +67,6 @@ final class UnknownFieldTest extends TestCase
     {
         $sent = [];
         $e = self::accounts();
-        $allowed = array_keys(self::COLUMNS);
-        sort($allowed);
 
         foreach ([AdapterRegistry::create('mock', ['seed' => self::SEED]), self::remote($sent)] as $adapter) {
             $db = new Client($adapter, ['accounts' => $e]);
@@ -80,7 +78,9 @@ final class UnknownFieldTest extends TestCase
                 $err = self::refusal($write);
                 $this->assertSame([400, 'unknown_field'], [$err->status, $err->errorCode]);
                 $this->assertStringContainsString("'frame_ancestors'", $err->getMessage());
-                $this->assertSame(['unknown' => ['frame_ancestors'], 'allowed' => $allowed], $err->details);
+                // Only the offending key: the entity's columns are not handed to the caller.
+                $this->assertSame(['unknown' => ['frame_ancestors']], $err->details);
+                $this->assertArrayNotHasKey('allowed', $err->details);
             }
             if ($adapter instanceof MockAdapter) {
                 $this->assertSame(self::SEED['accounts'][0], $db->get($e, 'a1'));
@@ -98,11 +98,12 @@ final class UnknownFieldTest extends TestCase
         $db = new Client(AdapterRegistry::create('mock', ['seed' => self::SEED]), ['accounts' => $e]);
         $err = self::refusal(static fn () => $db->create($e, ['name' => 'x', 'market' => 'de', '_actor' => null, 'at' => '2026-01-01T00:00:00Z']));
 
-        $this->assertSame(['_actor', 'at', 'market'], $err->details['unknown']);
+        $this->assertSame(['unknown' => ['_actor', 'at', 'market']], $err->details);
         $this->assertSame(
-            "unknown fields '_actor', 'at', 'market' — not a column of 'accounts'. A field that cannot be written is refused rather than dropped; see details.allowed.",
+            "unknown fields '_actor', 'at', 'market' — not a column of 'accounts'. A field that cannot be written is refused rather than dropped.",
             $err->getMessage(),
         );
+        $this->assertStringNotContainsString('details.allowed', $err->getMessage());
     }
 
     // data-client AC-13 — A write naming a field that is not a column is refused before any request
@@ -193,19 +194,25 @@ final class UnknownFieldTest extends TestCase
             $this->fail('expected unknown_field');
         } catch (HttpError $e) {
             $this->assertSame('unknown_field', $e->errorCode);
-            $this->assertSame(['unknown' => ['deleted_at', 'external_id'], 'allowed' => ['id', 'title']], $e->details);
+            $this->assertSame(['unknown' => ['deleted_at', 'external_id']], $e->details);
         }
 
+        // Every column the flags add is accepted in one write …
+        $all = [
+            'id' => 'n4', 'title' => 'Four', 'deleted_at' => null, 'deleted_by' => null, 'deleted_by_id' => null,
+            'external_id' => 'ERP-4', 'purge_blocked_reason' => null, 'trash_batch' => null,
+        ];
+        $db->create($notes, $all);
+        $this->assertSame($all, $sent[2]);
+
+        // … and a key still unknown is named alone, without the columns.
         try {
             $db->create($notes, ['id' => 'n3', 'frame_ancestors' => '*']);
             $this->fail('expected unknown_field');
         } catch (HttpError $e) {
-            $this->assertSame(
-                ['deleted_at', 'deleted_by', 'deleted_by_id', 'external_id', 'id', 'purge_blocked_reason', 'title', 'trash_batch'],
-                $e->details['allowed'],
-            );
+            $this->assertSame(['unknown' => ['frame_ancestors']], $e->details);
         }
-        $this->assertCount(2, $sent);
+        $this->assertCount(3, $sent);
 
         // The mock reads by them too, as the data plane does.
         $mock = new Client(AdapterRegistry::create('mock', ['seed' => ['notes' => [['id' => 'n1', 'title' => 'One']]]]), ['notes' => $notes]);
