@@ -25,7 +25,8 @@ use Revenexx\AppSdk\Settings;
  * One answer is a count without a list: `403` with the code
  * `app_not_installed` says the owning App is not installed for this tenant, so
  * nothing of it can point at the record, and the count is 0. Every other
- * refusal, a plain `404` included, stays null: a wrong path must never read as
+ * refusal stays null, `app_suspended` and a plain `404` included: a suspended
+ * installation still holds its rows, and a wrong path must never read as
  * "holds nothing".
  *
  * Options: `endpoint` (default REVENEXX_GATEWAY_ENDPOINT or the platform

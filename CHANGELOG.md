@@ -10,8 +10,9 @@ All notable changes to `revenexx/app-sdk` are listed here. The package follows
   installed for the tenant and nothing of it can point at the record: `count()`
   answers `0` and `blocker()` answers `null`. Before, that answer was "could not be
   checked", and a purge on a tenant without the other App was refused for good.
-  Every other refusal, a `404 not_found` included, is still `null` and an
-  `unverifiable` blocker, because a wrong path answers `404` too
+  Every other refusal is still `null` and an `unverifiable` blocker:
+  `403 app_suspended`, because a suspended installation still holds its rows,
+  and `404 not_found`, because a wrong path answers `404` too
   (`trash-routes` AC-13).
 
 ## 3.1.0

@@ -395,6 +395,7 @@ final class TrashTest extends TestCase
         $answers = [
             '/v1/mailings/mailings' => ['status' => 403, 'body' => '{"error":"app is not installed for this tenant","code":"app_not_installed"}'],
             '/v1/journeys/journeys' => ['status' => 403, 'body' => '{"error":"api key scope does not permit this capability","code":"forbidden"}'],
+            '/v1/loyalty/accounts' => ['status' => 403, 'body' => '{"error":"app is suspended for this tenant","code":"app_suspended"}'],
             '/v1/loyalty/acounts' => ['status' => 404, 'body' => '{"error":"no capability matches this route","code":"not_found"}'],
             '/v1/ads/ads' => ['status' => 404, 'body' => '{"error":"nope","code":"app_not_installed"}'],
             '/v1/reviews/reviews' => ['status' => 403, 'body' => ''],
@@ -406,8 +407,8 @@ final class TrashTest extends TestCase
 
         $this->assertSame(0, $refs->count($caller, '/v1/mailings/mailings', ['audience_id' => 'a1']));
         $this->assertNull($refs->blocker($caller, ['path' => '/v1/mailings/mailings', 'where' => ['audience_id' => 'a1'], 'reason' => 'mailings']));
-        // Another refusal, a wrong path, the code under another status, no body: still no answer.
-        foreach (['/v1/journeys/journeys', '/v1/loyalty/acounts', '/v1/ads/ads', '/v1/reviews/reviews'] as $path) {
+        // A suspended App, another refusal, a wrong path, the code under another status, no body: still no answer.
+        foreach (['/v1/loyalty/accounts', '/v1/journeys/journeys', '/v1/loyalty/acounts', '/v1/ads/ads', '/v1/reviews/reviews'] as $path) {
             $this->assertNull($refs->count($caller, $path));
             $this->assertSame('unverifiable', $refs->blocker($caller, ['path' => $path, 'reason' => 'references'])['code']);
         }
