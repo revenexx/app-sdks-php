@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Revenexx\AppSdk\Router;
 
+use Revenexx\AppSdk\AnswerScope;
 use Revenexx\AppSdk\HttpError;
 use Revenexx\AppSdk\Settings;
 
@@ -196,11 +197,17 @@ final class App
                 // A handler's answer leaves `tenant_id` out unless the App opts out.
                 respond: ($this->options['answerTenantId'] ?? false) === true
                     ? \Closure::fromCallable($respond)
-                    : static fn (mixed $data, int $status = 200): mixed => $respond(Answer::withoutTenantId($data), $status),
+                    : static fn (mixed $data, int $status = 200): mixed => $respond(Answer::withoutTenantId($data, AnswerScope::documents()), $status),
                 logger: \Closure::fromCallable($log),
             );
 
-            return ($matched[0]['handler'])($c);
+            // The document columns the handler's reads name ({@see AnswerScope}).
+            $previous = AnswerScope::open();
+            try {
+                return ($matched[0]['handler'])($c);
+            } finally {
+                AnswerScope::close($previous);
+            }
         } catch (HttpError $e) {
             // The diagnosis stays on this side of the wire: logged, never answered.
             if ($e->serverDetail !== null) {

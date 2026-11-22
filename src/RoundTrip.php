@@ -214,8 +214,10 @@ final class RoundTrip
     }
 
     /**
-     * Whether the store assigns the key on create: a serial / bigserial key, or
-     * one whose default is gen_random_uuid(). A key without a default is the caller's.
+     * Whether the store assigns the key on create: a serial / smallserial /
+     * bigserial key, an identity key (`generated … as identity`, or `identity`
+     * in the descriptor), or one whose default draws it — gen_random_uuid(),
+     * uuid_generate_v4(), nextval(…). A key without a default is the caller's.
      *
      * @param array<string, mixed> $columns
      */
@@ -225,11 +227,15 @@ final class RoundTrip
         if (! \is_array($def)) {
             return false;
         }
-        if (preg_match('/^(big)?serial\b/i', (string) ($def['type'] ?? ''))) {
+        $type = (string) ($def['type'] ?? '');
+        if (preg_match('/^(small|big)?serial\b/i', $type)) {
+            return true;
+        }
+        if (preg_match('/\bgenerated\s+(always|by\s+default)\s+as\s+identity\b/i', $type) || (($def['identity'] ?? null) !== null && $def['identity'] !== false)) {
             return true;
         }
 
-        return (bool) preg_match('/gen_random_uuid/i', (string) ($def['default'] ?? ''));
+        return (bool) preg_match('/\b(gen_random_uuid|uuid_generate_v4|nextval)\s*\(/i', (string) ($def['default'] ?? ''));
     }
 
     /**
@@ -240,15 +246,16 @@ final class RoundTrip
      * and no UPDATE on either. Postgres refuses a write naming such a column
      * with SQLSTATE 42501, which PostgREST answers 401/403 and the adapters map
      * to `bad_request` "unauthenticated". When the refused write named
-     * `tenant_id` or the key, the refusal is `400 store_owned_field` naming it,
-     * as `Crud::mount` answers before the request. `tenant_id` is named first:
-     * it is never granted, while a key may be. Any other 42501 keeps its
-     * mapping; null when `$err` is not such a refusal. Same rule as the
-     * JavaScript SDK.
+     * `tenant_id`, or a key the store assigns, the refusal is `400
+     * store_owned_field` naming it, as `Crud::mount` answers before the
+     * request; `tenant_id` is named first. A key the caller assigns is
+     * granted, so it never counts. Any other 42501 keeps its mapping; null
+     * when `$err` is not such a refusal. Same rule as the JavaScript SDK.
      *
-     * @param array<array-key, mixed> $body one record, or a list of them
+     * @param array<string, mixed>   $columns the entity's column metadata
+     * @param array<array-key, mixed> $body    one record, or a list of them
      */
-    public static function storeOwnedRefusal(string $pk, array $body, HttpError $err): ?HttpError
+    public static function storeOwnedRefusal(string $pk, array $columns, array $body, HttpError $err): ?HttpError
     {
         $detail = $err->serverDetail;
         if (! \is_array($detail) || ($detail['sqlstate'] ?? null) !== '42501') {
@@ -256,7 +263,10 @@ final class RoundTrip
         }
         $records = array_is_list($body) && $body !== [] && \is_array($body[0]) ? $body : [$body];
         $pk = $pk !== '' ? $pk : 'id';
-        foreach (array_unique(['tenant_id', $pk]) as $field) {
+        // The key counts only when the store assigns it: a key the caller
+        // assigns is granted, so the refusal is about another column.
+        $candidates = self::storeAssignsKey($pk, $columns) ? ['tenant_id', $pk] : ['tenant_id'];
+        foreach (array_unique($candidates) as $field) {
             foreach ($records as $record) {
                 if (\is_array($record) && \array_key_exists($field, $record)) {
                     $message = $field === 'tenant_id'

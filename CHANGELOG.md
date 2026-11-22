@@ -3,28 +3,40 @@
 All notable changes to `revenexx/app-sdk` are listed here. The package follows
 [semantic versioning](https://semver.org).
 
-## Unreleased
+## Unreleased — 3.0.0
 
-The next release is **2.3.0**: an answer never carries `tenant_id`, and a write
-refused for the tenant or the key names it.
+The next release is **3.0.0**, a major: it changes what a mounted route answers and
+the status and code of a refusal (`docs/versioning.md`).
 
-- **`$c->json()` leaves `tenant_id` out of every answer, at any depth** — records,
-  lists, envelopes and embedded relations, and therefore every `Crud::mount` and
-  `Trash::mount` route. Arrays, objects and `JsonSerializable`s are walked; an object
-  left with no key is answered as `{}`, never `[]`. A value `"tenant_id"` and keys that
-  only resemble it are kept, and the request body is not touched. An App whose answer
-  has to name the tenant opts out for all its routes with `new App(['answerTenantId'
-  => true])`. The walk is `Router\Answer::withoutTenantId()` (`router` AC-9, AC-10).
-- **A write refused for want of a grant names `tenant_id` or the key.** When the data
-  plane refuses `create()`, `createMany()`, `update()` or `updateIf()` with SQLSTATE
-  42501 and the write names `tenant_id` or the primary key, the refusal is `400
+- **Breaking — `$c->json()` leaves `tenant_id` out of every record it answers, at any
+  depth**: the answer, list elements, envelopes and embedded relations, and therefore
+  every `Crud::mount` and `Trash::mount` route. A stored document is left alone: the
+  value of a `json` / `jsonb` column of an entity the request reached through the
+  `Client` is answered as stored, its own `tenant_id` included, so a GET → PUT never
+  deletes it. Arrays, objects, `JsonSerializable`s and `ArrayObject`s are walked; an
+  object that loses the key stays an object (`{}`, `{"0": …}`), never a list. A value
+  `"tenant_id"` and keys that only resemble it are kept, and the request body is not
+  touched. An App whose answer has to name the tenant opts out for all its routes with
+  `new App(['answerTenantId' => true])`. The walk is
+  `Router\Answer::withoutTenantId($value, $documentKeys)` (`router` AC-9 to AC-11).
+- **Breaking — a create refused for want of a grant names `tenant_id` or the key.**
+  When the data plane refuses `create()` or `createMany()` with SQLSTATE 42501 and the
+  write names `tenant_id` or a key the store assigns, the refusal is `400
   store_owned_field` naming it in `details['field']` (`tenant_id` first), as
-  `Crud::mount`'s `POST` answers. It was `401` "unauthenticated". Any other refusal
-  keeps its answer; a key the caller assigns is granted and unaffected
+  `Crud::mount`'s `POST` answers. It was `401` "unauthenticated". A key the caller
+  assigns is granted and never blamed; that refusal, like any other, keeps its answer
   (`data-client` AC-20).
-- **The mock refuses a create naming `tenant_id` or a key the store assigns**, even as
-  null, with the `401` the grant makes production answer, so through the client a test
-  sees the same `400` (`mock-fidelity` AC-7).
+- **A key the store assigns** is now also an identity key or one defaulting to
+  `uuid_generate_v4()` or `nextval(…)`, besides `serial` and `gen_random_uuid()` — for
+  `Crud::mount`'s `POST` too.
+- **Breaking for tests — the mock refuses a create naming `tenant_id` or a key the store
+  assigns**, even as null, with the `401` the grant makes production answer, so through
+  the client a test sees the same `400` (`mock-fidelity` AC-7).
+
+Raising an App to `^3`: drop `tenant_id` from tests that expect it in an answer; seed
+rows with an explicit store-assigned key or `tenant_id` through the mock's `seed`
+instead of creating them; and create the `App` with `answerTenantId` only if its callers
+must read the tenant from the answer.
 
 ## 2.2.0
 

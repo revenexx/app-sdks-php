@@ -179,7 +179,7 @@ final class Client
         try {
             return $write();
         } catch (HttpError $err) {
-            throw RoundTrip::storeOwnedRefusal($entity->pk, $body, $err) ?? $err;
+            throw RoundTrip::storeOwnedRefusal($entity->pk, $entity->columns, $body, $err) ?? $err;
         }
     }
 
@@ -261,6 +261,8 @@ final class Client
     /** `$method` names what the App called when it differs from the op it needs. */
     private function guard(Entity $entity, string $op, ?string $method = null): void
     {
+        // The document columns a request reaching this entity answers as stored.
+        AnswerScope::note($entity->columns);
         if (! $entity->allows($op)) {
             $method ??= $op;
             throw HttpError::forbidden(

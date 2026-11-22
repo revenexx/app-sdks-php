@@ -14,50 +14,65 @@ namespace Revenexx\AppSdk\Router;
  * leaves it out of every answer a handler gives with `$c->json()`, unless the
  * App is created with `['answerTenantId' => true]`.
  *
+ * A stored document is the App's content, not a record: the value under a key
+ * named in `$documents` — the `json` / `jsonb` columns of the entities the
+ * request reached ({@see \Revenexx\AppSdk\AnswerScope}) — is answered as
+ * stored, `tenant_id` and all.
+ *
  * One pass over the answer. Arrays and objects are walked; a
- * `JsonSerializable` is walked as what it serialises to. An object that loses
- * its last key stays an object (`{}`), never an empty list.
+ * `JsonSerializable` as what it serialises to, an `ArrayObject` /
+ * `ArrayIterator` as its storage, any other object as its public properties.
+ * An object that loses its key stays an object — `{}`, or `{"0": …}` when
+ * what is left would read as a list — as in JavaScript.
  */
 final class Answer
 {
     /** The key no answer carries unless the App opts out. */
     public const TENANT_KEY = 'tenant_id';
 
-    public static function withoutTenantId(mixed $value): mixed
+    /** @param list<string> $documents keys whose value is a stored document, left as given */
+    public static function withoutTenantId(mixed $value, array $documents = []): mixed
     {
         $changed = false;
 
-        return self::walk($value, $changed);
+        return self::walk($value, array_fill_keys($documents, true), $changed);
     }
 
-    /** `$value` without the key; `$changed` says whether anything was left out. */
-    private static function walk(mixed $value, bool &$changed): mixed
+    /**
+     * `$value` without the key; `$changed` says whether anything was left out.
+     *
+     * @param array<string, true> $docs
+     */
+    private static function walk(mixed $value, array $docs, bool &$changed): mixed
     {
         $changed = false;
         if (\is_array($value)) {
-            return self::fromArray($value, $changed);
+            return self::fromArray($value, $docs, $changed);
+        }
+        if (! \is_object($value)) {
+            return $value;
         }
         if ($value instanceof \JsonSerializable) {
-            $out = self::walk($value->jsonSerialize(), $changed);
+            $out = self::walk($value->jsonSerialize(), $docs, $changed);
 
             return $changed ? $out : $value;
         }
-        if (\is_object($value)) {
-            // What json_encode reads of an object: its public properties.
-            $vars = get_object_vars($value);
-            if ($vars === []) {
-                return $value;
-            }
-            $out = self::fromArray($vars, $changed);
-
-            return $changed ? (object) $out : $value;
+        // What json_encode reads of an object: an ArrayObject's storage, else
+        // its public properties.
+        $vars = $value instanceof \ArrayObject || $value instanceof \ArrayIterator ? $value->getArrayCopy() : get_object_vars($value);
+        if ($vars === []) {
+            return $value;
         }
+        $out = self::fromArray($vars, $docs, $changed, true);
 
-        return $value;
+        return $changed ? (\is_array($out) ? (object) $out : $out) : $value;
     }
 
-    /** @param array<array-key, mixed> $value */
-    private static function fromArray(array $value, bool &$changed): mixed
+    /**
+     * @param array<array-key, mixed> $value
+     * @param array<string, true> $docs
+     */
+    private static function fromArray(array $value, array $docs, bool &$changed, bool $object = false): mixed
     {
         $keyed = \array_key_exists(self::TENANT_KEY, $value);
         if ($keyed) {
@@ -65,17 +80,17 @@ final class Answer
             $changed = true;
         }
         foreach ($value as $k => $item) {
-            if (\is_array($item) || \is_object($item)) {
+            if ((\is_array($item) || \is_object($item)) && ! isset($docs[(string) $k])) {
                 $sub = false;
-                $next = self::walk($item, $sub);
+                $next = self::walk($item, $docs, $sub);
                 if ($sub) {
                     $value[$k] = $next;
                     $changed = true;
                 }
             }
         }
-        // `{"tenant_id": …}` decoded to an array is an object; without its key
-        // it would encode as `[]`.
-        return $keyed && $value === [] ? new \stdClass() : $value;
+        // An array that held `tenant_id` was an object; without the key it must
+        // not encode as a list (`[]`, `["a"]`).
+        return ($keyed || $object) && array_is_list($value) ? (object) $value : $value;
     }
 }

@@ -221,13 +221,23 @@ Routing rules:
 - An unknown path answers `404`; a known path with the wrong method answers `405`.
 - `GET /` answers the App's name and its routes, as a health check.
 
-An answer never carries `tenant_id`: `$c->json()` leaves the key out at any depth —
-records, lists, envelopes, embedded relations — and so does every `Crud::mount` and
-`Trash::mount` route. An object left with no key is answered as `{}`. A value
-`"tenant_id"` and keys that only resemble it are kept, and the request body is not
-touched. An App whose answer has to name the tenant opts out for all its routes with
+An answer never carries `tenant_id`: `$c->json()` leaves the key out of every record
+at any depth — the answer, lists, envelopes, embedded relations — and so does every
+`Crud::mount` and `Trash::mount` route. A stored document is answered as stored: the
+value of a `json` / `jsonb` column of an entity the request reached through the
+`Client` keeps its own `tenant_id`, so a GET → PUT never deletes it. An object that
+loses the key stays an object (`{}`, `{"0": …}`). A value `"tenant_id"` and keys that
+only resemble it are kept, and the request body is not touched. An App whose answer
+has to name the tenant opts out for all its routes with
 `new App(['name' => '…', 'answerTenantId' => true])`. The walk is
-`Router\Answer::withoutTenantId($value)`, for code that answers some other way.
+`Router\Answer::withoutTenantId($value, $documentKeys)`, for code that answers some
+other way.
+
+**Raising an App to 3.0:** drop `tenant_id` from tests that expect it in an answer;
+seed rows with an explicit store-assigned key or `tenant_id` through the mock's
+`seed` instead of creating them (the mock now refuses such a create as production
+does); and set `answerTenantId` only if the App's callers must read the tenant from
+the answer.
 
 ### One-line CRUD
 
@@ -351,7 +361,7 @@ The data client raises `HttpError`s itself:
 | an operation the manifest does not grant | 403 | `not_permitted` |
 | an update with nothing to update | 400 | `empty_update` |
 | an update naming another key or tenant than the record's | 400 | `store_owned_field` |
-| a write the data plane refuses for want of a grant (42501) that names `tenant_id` or the key — `details['field']` names it, `tenant_id` first | 400 | `store_owned_field` |
+| a create the data plane refuses for want of a grant (42501) that names `tenant_id` or a key the store assigns — `details['field']` names it, `tenant_id` first | 400 | `store_owned_field` |
 | a `Crud::mount` `PUT` changing a `readOnly` column | 400 | `read_only_field` |
 | a create with nothing to create (`[]`) | 400 | `empty_create` |
 | `updateIf` without a condition | 400 | `empty_condition` |

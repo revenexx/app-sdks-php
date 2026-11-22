@@ -74,4 +74,23 @@ final class AnswerTest extends TestCase
         $out = Answer::withoutTenantId(['lines' => [$line], 'at' => $untouched]);
         $this->assertSame('{"lines":[{"id":"l1"}],"at":' . json_encode($untouched) . '}', json_encode($out));
     }
+    // router AC-9 — An answer carries no tenant_id at any depth
+    #[Group('spec:router:AC-9')]
+    #[Group('spec:router')]
+    public function testAnArrayObjectIsAnsweredAsItsStorage(): void
+    {
+        $this->assertSame('{"lines":[{"id":"l1"}],"list":{"0":"a"}}', json_encode(Answer::withoutTenantId([
+            'lines' => [new \ArrayObject(['id' => 'l1', 'tenant_id' => 'acme'])],
+            'list' => new \ArrayObject([0 => 'a', 'tenant_id' => 'acme']),
+        ])));
+    }
+
+    // router AC-11 — A stored document is answered as stored
+    #[Group('spec:router:AC-11')]
+    #[Group('spec:router')]
+    public function testTheValueUnderANamedDocumentKeyIsLeftAsGiven(): void
+    {
+        $out = Answer::withoutTenantId(['id' => 'r1', 'tenant_id' => 'acme', 'payload' => ['tenant_id' => 'psp'], 'other' => ['tenant_id' => 'x']], ['payload']);
+        $this->assertSame('{"id":"r1","payload":{"tenant_id":"psp"},"other":{}}', json_encode($out));
+    }
 }

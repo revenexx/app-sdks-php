@@ -1145,4 +1145,36 @@ final class ParityTest extends TestCase
             $this->assertSame($encode($want), $res['raw']);
         }
     }
+    /**
+     * A stored document is answered as stored: the record loses `tenant_id`,
+     * its `jsonb` payload keeps its own, and a GET → PUT keeps it stored.
+     */
+    // router AC-11 — A stored document is answered as stored
+    #[Group('spec:router:AC-11')]
+    #[Group('spec:router')]
+    #[Group('spec:runtime-parity:AC-9')]
+    #[Group('spec:runtime-parity')]
+    public function testAStoredDocumentKeepsItsOwnTenantId(): void
+    {
+        self::requireFixture();
+        $doc = self::fixture()['answers']['documents'];
+        $e = new Entity('items', 't_items', $doc['entity']['pk'], $doc['entity']['columns'], ['list', 'get', 'create', 'update']);
+        $db = new Client(AdapterRegistry::create('mock', ['seed' => ['items' => [$doc['row']]]]), ['items' => $e]);
+        $app = new App(['name' => 'items']);
+        Crud::mount($app, $db, $e, ['path' => '/items']);
+        $app->get('/export', static fn ($c) => $c->json($db->list($e)));
+        $app->get('/unread', static fn ($c) => $c->json($doc['unread']['data']));
+
+        $this->assertSame($doc['answer'], FakeContext::call($app, 'GET', '/items/r1')['data']);
+        $this->assertSame([$doc['answer']], FakeContext::call($app, 'GET', '/items')['data']['items']);
+        $this->assertSame([$doc['answer']], FakeContext::call($app, 'GET', '/export')['data']);
+
+        $read = FakeContext::call($app, 'GET', '/items/r1')['data'];
+        $put = FakeContext::call($app, 'PUT', '/items/r1', ['body' => $read]);
+        $this->assertSame([200, $doc['answer']], [$put['status'], $put['data']], $put['raw']);
+        $this->assertSame($doc['row'], $db->get($e, 'r1'));
+
+        // An answer that reached no entity with the column is walked like any other.
+        $this->assertSame((string) json_encode((object) ['payload' => new \stdClass()]), FakeContext::call($app, 'GET', '/unread')['raw']);
+    }
 }
