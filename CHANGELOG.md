@@ -6,12 +6,14 @@ All notable changes to `revenexx/app-sdk` are listed here. The package follows
 ## 3.2.0
 
 - **`GatewayCounter` counts zero for an App the tenant does not have.** When the
-  gateway answers `403` with the code `app_not_installed`, the owning App is not
-  installed for the tenant and nothing of it can point at the record: `count()`
+  gateway answers `403` with the code `app_not_installed`, nothing of the owning
+  App is here (never installed, or uninstalled with its data deleted), so nothing
+  of it can point at the record: `count()`
   answers `0` and `blocker()` answers `null`. Before, that answer was "could not be
   checked", and a purge on a tenant without the other App was refused for good.
   Every other refusal is still `null` and an `unverifiable` blocker:
-  `403 app_suspended`, because a suspended installation still holds its rows,
+  `403 app_suspended`, because a suspended installation, or one uninstalled
+  with its data kept, still holds its rows,
   and `404 not_found`, because a wrong path answers `404` too
   (`trash-routes` AC-13).
 

@@ -327,11 +327,12 @@ $trash = Trash::mount($app, $client, $client->entity('organizations'), [
   `canDeleteForGood` can require its own permission (`403 not_permitted`).
 - `POST /organizations/{id}/restore` brings back the row and the children of its
   group (`409 parent_in_trash` when its `parent` is in the trash).
-- `$refs->blocker($c, …)` counts another App's records by its list's
-  `page.total`. A gateway answer of `403 app_not_installed` counts 0: the App is
-  not installed for the tenant and holds nothing. Every other failure is an
-  `unverifiable` blocker, `403 app_suspended` (the rows still exist) and
-  `404 not_found` included.
+- `$refs->blocker($c, …)` counts another App's records by its list's `page.total`.
+  A gateway answer of `403 app_not_installed` counts 0: nothing of the App is
+  here (never installed, or uninstalled with its data deleted), so it holds
+  nothing. Every other failure is an `unverifiable` blocker, `403 app_suspended`
+  included (suspended, or uninstalled with its data kept: the rows still exist),
+  and so is `404 not_found`.
 - `$trash->purge($caller)` is the scheduled job. It reads `trash_retention_days`
   through the gateway (`GET /v1/audit/settings`, 90 when unset;
   `REVENEXX_AUDIT_SETTINGS_URL` overrides the URL) and deletes for good what is

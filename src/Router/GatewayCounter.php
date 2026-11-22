@@ -23,10 +23,11 @@ use Revenexx\AppSdk\Settings;
  * `unverifiable` blocker. Not knowing is never a pass.
  *
  * One answer is a count without a list: `403` with the code
- * `app_not_installed` says the owning App is not installed for this tenant, so
+ * `app_not_installed` says nothing of the owning App is here (never installed,
+ * or uninstalled with its data deleted), so
  * nothing of it can point at the record, and the count is 0. Every other
  * refusal stays null, `app_suspended` and a plain `404` included: a suspended
- * installation still holds its rows, and a wrong path must never read as
+ * installation, or one uninstalled with its data kept, still holds its rows, and a wrong path must never read as
  * "holds nothing".
  *
  * Options: `endpoint` (default REVENEXX_GATEWAY_ENDPOINT or the platform
