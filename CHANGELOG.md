@@ -8,17 +8,18 @@ All notable changes to `revenexx/app-sdk` are listed here. The package follows
 The next release is **3.0.0**, a major: it changes what a mounted route answers and
 the status and code of a refusal (`docs/versioning.md`).
 
-- **Breaking — `$c->json()` leaves `tenant_id` out of every record it answers, at any
-  depth**: the answer, list elements, envelopes and embedded relations, and therefore
-  every `Crud::mount` and `Trash::mount` route. A stored document is left alone: the
-  value of a `json` / `jsonb` column of an entity the request reached through the
-  `Client` is answered as stored, its own `tenant_id` included, so a GET → PUT never
-  deletes it. Arrays, objects, `JsonSerializable`s and `ArrayObject`s are walked; an
-  object that loses the key stays an object (`{}`, `{"0": …}`), never a list. A value
-  `"tenant_id"` and keys that only resemble it are kept, and the request body is not
-  touched. An App whose answer has to name the tenant opts out for all its routes with
-  `new App(['answerTenantId' => true])`. The walk is
-  `Router\Answer::withoutTenantId($value, $documentKeys)` (`router` AC-9 to AC-11).
+- **Breaking — rows the `Client` returns carry no `tenant_id`.** `get()`, `list()`,
+  `page()`, and the rows `create()`, `createMany()`, `update()` and `updateIf()`
+  answer come without it, and so does every embedded relation row the `select`
+  names, at any depth — and therefore every `Crud::mount` and `Trash::mount` answer.
+  The client strips at the row level: the value of a `json` / `jsonb` column is
+  returned as stored, its own `tenant_id` included, so a record read and sent back
+  writes its documents back as they were. The rules that compare against the stored
+  tenant read the adapter's row, so a `PUT` naming another tenant is still `400
+  store_owned_field`. An answer a handler builds itself is written as given. An App
+  whose code has to read the tenant from a row creates the client with
+  `keepTenantId: true`. `Tenant::withoutTenantId()` strips rows read past the client,
+  shallowly (`data-client` AC-21 to AC-24).
 - **Breaking — a create refused for want of a grant names `tenant_id` or the key.**
   When the data plane refuses `create()` or `createMany()` with SQLSTATE 42501 and the
   write names `tenant_id` or a key the store assigns, the refusal is `400
@@ -33,10 +34,11 @@ the status and code of a refusal (`docs/versioning.md`).
   assigns**, even as null, with the `401` the grant makes production answer, so through
   the client a test sees the same `400` (`mock-fidelity` AC-7).
 
-Raising an App to `^3`: drop `tenant_id` from tests that expect it in an answer; seed
-rows with an explicit store-assigned key or `tenant_id` through the mock's `seed`
-instead of creating them; and create the `App` with `answerTenantId` only if its callers
-must read the tenant from the answer.
+Raising an App to `^3`: drop `tenant_id` from tests that compare a read with seeded
+rows or expect it in an answer; seed rows with an explicit store-assigned key or
+`tenant_id` through the mock's `seed` instead of creating them; drop `tenant_id` from
+capability response schemas; and create the `Client` with `keepTenantId` only if the
+App's code must read the tenant from a row.
 
 ## 2.2.0
 

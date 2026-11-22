@@ -14,9 +14,9 @@ use Revenexx\AppSdk\Entity;
 use Revenexx\AppSdk\HttpError;
 use Revenexx\AppSdk\Query;
 use Revenexx\AppSdk\Refusal;
+use Revenexx\AppSdk\Tenant;
 use Revenexx\AppSdk\Tests\Support\PlatformException;
 use Revenexx\AppSdk\Router\Actor;
-use Revenexx\AppSdk\Router\Answer;
 use Revenexx\AppSdk\Router\App;
 use Revenexx\AppSdk\Router\Crud;
 use Revenexx\AppSdk\Router\RouteContext;
@@ -912,8 +912,8 @@ final class ParityTest extends TestCase
         if (\array_key_exists('write', $want) && $want['write'] === null) {
             $this->assertSame([], $writes);
             $answer = \array_key_exists('answer', $want) ? $want['answer'] : 'row';
-            // A route answers without `tenant_id` (router AC-9).
-            $this->assertEquals($answer === 'row' ? ($layer === 'route' ? Answer::withoutTenantId($stored) : $stored) : null, $row);
+            // The client returns the row without `tenant_id` (data-client AC-21).
+            $this->assertEquals($answer === 'row' ? Tenant::withoutTenantId($stored) : null, $row);
         } else {
             $this->assertEquals([$want['write']], $writes);
         }
@@ -1083,7 +1083,7 @@ final class ParityTest extends TestCase
             $this->assertCount(\count($o['rows']) + ($case['call'] === 'createMany' ? \count($case['data']) : 1), $db->list($e));
         } catch (HttpError $err) {
             $refused($err);
-            $this->assertSame($o['rows'], $db->list($e));
+            $this->assertSame(Tenant::withoutTenantId($o['rows']), $db->list($e));
         }
         if ($case['call'] !== 'create') {
             return;
@@ -1103,78 +1103,102 @@ final class ParityTest extends TestCase
         }
     }
 
-    /** @return iterable<string, array{mixed, mixed, string}> */
-    public static function answerCases(): iterable
+    /** @return array{Entity, array<string, mixed>} */
+    private static function clientReadsEntity(): array
+    {
+        $r = self::fixture()['client_reads'];
+
+        return [new Entity('items', 't_items', $r['entity']['pk'], $r['entity']['columns'], ['list', 'get', 'create', 'update']), $r];
+    }
+
+    /** @param list<array<string, mixed>> $writes */
+    private static function clientReadsPlane(array $rows, array &$writes = []): RemoteAdapter
+    {
+        return new RemoteAdapter('http://pgrst:3000', transport: static function (string $m, string $u, array $h, ?string $body) use ($rows, &$writes): array {
+            if ($m !== 'GET') {
+                $writes[] = json_decode((string) $body, true);
+            }
+
+            return ['status' => $m === 'POST' ? 201 : 200, 'body' => (string) json_encode($rows)];
+        });
+    }
+
+    /**
+     * Rows the client returns carry no `tenant_id`; a stored document keeps its
+     * own; a client created to keep the tenant returns the row as stored.
+     */
+    // data-client AC-21 — Rows the client returns carry no tenant_id
+    // data-client AC-22 — A stored document is returned as stored
+    // data-client AC-23 — An App that must read tenant_id says so
+    #[Group('spec:data-client:AC-21')]
+    #[Group('spec:data-client:AC-22')]
+    #[Group('spec:data-client:AC-23')]
+    #[Group('spec:data-client')]
+    #[Group('spec:runtime-parity:AC-9')]
+    #[Group('spec:runtime-parity')]
+    public function testRowsTheClientReturnsCarryNoTenantId(): void
+    {
+        self::requireFixture();
+        [$e, $r] = self::clientReadsEntity();
+        $mock = static fn (bool $keep = false): Client => new Client(AdapterRegistry::create('mock', ['seed' => ['items' => [$r['row']]]]), ['items' => $e], keepTenantId: $keep);
+
+        $db = $mock();
+        $this->assertSame($r['answer'], $db->get($e, 'r1'));
+        $this->assertSame([$r['answer']], $db->list($e));
+        $this->assertSame([$r['answer']], $db->page($e)['items']);
+
+        // Every write answers the row without the tenant.
+        $db = new Client(self::clientReadsPlane([$r['row']]), ['items' => $e]);
+        $this->assertSame($r['answer'], $db->create($e, ['id' => 'r1', 'code' => 'one']));
+        $this->assertSame([$r['answer']], $db->createMany($e, [['id' => 'r1', 'code' => 'one']]));
+        $this->assertSame($r['answer'], $db->update($e, 'r1', ['code' => 'one']));
+        $this->assertSame($r['answer'], $db->updateIf($e, 'r1', ['code' => 'one'], ['code' => 'one']));
+
+        // The mounted collection, and the read sent back as PUT: the documents
+        // are written back as stored.
+        $app = new App(['name' => 'items']);
+        Crud::mount($app, $mock(), $e, ['path' => '/items']);
+        $this->assertSame([$r['answer']], FakeContext::call($app, 'GET', '/items')['data']['items']);
+        $read = FakeContext::call($app, 'GET', '/items/r1')['data'];
+        $this->assertSame($r['answer'], $read);
+        $writes = [];
+        $routed = new App(['name' => 'items']);
+        Crud::mount($routed, new Client(self::clientReadsPlane([$r['row']], $writes), ['items' => $e]), $e, ['path' => '/items']);
+        $put = FakeContext::call($routed, 'PUT', '/items/r1', ['body' => $read]);
+        $this->assertSame([200, $r['answer']], [$put['status'], $put['data']], $put['raw']);
+        $this->assertSame([['code' => $r['row']['code'], 'items' => $r['row']['items'], 'payload' => $r['row']['payload']]], $writes);
+
+        // A client created to keep the tenant.
+        $db = $mock(true);
+        $this->assertSame($r['row'], $db->get($e, 'r1'));
+        $this->assertSame([$r['row']], $db->list($e));
+    }
+
+    /** @return iterable<string, array{array<string, mixed>}> */
+    public static function embedCases(): iterable
     {
         if (! is_file(self::FIXTURE)) {
-            yield 'parity cases not available' => [null, null, 'arrays'];
+            yield from self::absent(1);
 
             return;
         }
-        // Decoded as objects, so an empty object stays `{}` in the expected JSON.
-        $fixture = json_decode((string) file_get_contents(self::FIXTURE), false, flags: JSON_THROW_ON_ERROR);
-        foreach ($fixture->answers->cases as $case) {
-            foreach (['arrays', 'objects'] as $as) {
-                yield "{$as}: {$case->name}" => [$case->data, $case->answer, $as];
-            }
+        foreach (self::fixture()['client_reads']['embeds'] as $case) {
+            yield $case['name'] => [$case];
         }
     }
 
-    /**
-     * `$c->json()` leaves `tenant_id` out at any depth; an App created with
-     * `answerTenantId` answers as given. The handler's data is the case's,
-     * decoded as arrays or as objects; the JSON text is compared.
-     */
-    // router AC-9 — An answer carries no tenant_id at any depth
-    // router AC-10 — An App that must answer tenant_id says so
-    #[Group('spec:router:AC-9')]
-    #[Group('spec:router:AC-10')]
-    #[Group('spec:router')]
+    /** @param array<string, mixed> $case */
+    // data-client AC-21 — Rows the client returns carry no tenant_id
+    #[Group('spec:data-client:AC-21')]
+    #[Group('spec:data-client')]
     #[Group('spec:runtime-parity:AC-9')]
     #[Group('spec:runtime-parity')]
-    #[DataProvider('answerCases')]
-    public function testAnAnswerLeavesTheTenantOut(mixed $data, mixed $answer, string $as): void
+    #[DataProvider('embedCases')]
+    public function testAListWithEmbedsIsStrippedAsTheFixtureSays(array $case): void
     {
         self::requireFixture();
-        $given = $as === 'arrays' ? json_decode((string) json_encode($data), true) : $data;
-        $encode = static fn (mixed $v): string => (string) json_encode($v, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION);
-        foreach ([[[], $answer], [['answerTenantId' => true], $data]] as [$options, $want]) {
-            $app = new App(['name' => 'items', ...$options]);
-            $app->get('/items', static fn ($c) => $c->json($given));
-            $res = FakeContext::call($app, 'GET', '/items');
-            $this->assertSame($encode($want), $res['raw']);
-        }
-    }
-    /**
-     * A stored document is answered as stored: the record loses `tenant_id`,
-     * its `jsonb` payload keeps its own, and a GET → PUT keeps it stored.
-     */
-    // router AC-11 — A stored document is answered as stored
-    #[Group('spec:router:AC-11')]
-    #[Group('spec:router')]
-    #[Group('spec:runtime-parity:AC-9')]
-    #[Group('spec:runtime-parity')]
-    public function testAStoredDocumentKeepsItsOwnTenantId(): void
-    {
-        self::requireFixture();
-        $doc = self::fixture()['answers']['documents'];
-        $e = new Entity('items', 't_items', $doc['entity']['pk'], $doc['entity']['columns'], ['list', 'get', 'create', 'update']);
-        $db = new Client(AdapterRegistry::create('mock', ['seed' => ['items' => [$doc['row']]]]), ['items' => $e]);
-        $app = new App(['name' => 'items']);
-        Crud::mount($app, $db, $e, ['path' => '/items']);
-        $app->get('/export', static fn ($c) => $c->json($db->list($e)));
-        $app->get('/unread', static fn ($c) => $c->json($doc['unread']['data']));
-
-        $this->assertSame($doc['answer'], FakeContext::call($app, 'GET', '/items/r1')['data']);
-        $this->assertSame([$doc['answer']], FakeContext::call($app, 'GET', '/items')['data']['items']);
-        $this->assertSame([$doc['answer']], FakeContext::call($app, 'GET', '/export')['data']);
-
-        $read = FakeContext::call($app, 'GET', '/items/r1')['data'];
-        $put = FakeContext::call($app, 'PUT', '/items/r1', ['body' => $read]);
-        $this->assertSame([200, $doc['answer']], [$put['status'], $put['data']], $put['raw']);
-        $this->assertSame($doc['row'], $db->get($e, 'r1'));
-
-        // An answer that reached no entity with the column is walked like any other.
-        $this->assertSame((string) json_encode((object) ['payload' => new \stdClass()]), FakeContext::call($app, 'GET', '/unread')['raw']);
+        [$e] = self::clientReadsEntity();
+        $db = new Client(self::clientReadsPlane($case['rows']), ['items' => $e]);
+        $this->assertSame($case['answer'], $db->list($e, ['select' => $case['select']]));
     }
 }

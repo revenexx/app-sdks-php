@@ -143,6 +143,25 @@ condition no longer holds, so it gets `null`, reads again and decides again.
 Only the operations the manifest grants are available. Any other call fails with a
 `403` and the code `not_permitted`, naming the method.
 
+### Rows carry no `tenant_id`
+
+Every row the `Client` returns — `get()`, `list()`, `page()`, and the rows `create()`,
+`createMany()`, `update()` and `updateIf()` answer — comes without `tenant_id`, and so
+does every embedded relation row the `select` names, at any depth. The `Crud::mount`
+and `Trash::mount` routes answer these rows. A stored document is returned as stored:
+the value of a `json` / `jsonb` column keeps its own `tenant_id`, so a record read and
+sent back writes it back as it was. The rules that compare against the stored tenant
+read the row from the adapter. An App whose code has to read the tenant from a row
+creates its client with `new Client($adapter, $entities, keepTenantId: true)`.
+`Tenant::withoutTenantId($rowOrRows)` does the same, shallowly, for rows read past the
+client.
+
+**Raising an App to 3.0:** drop `tenant_id` from tests that compare a read with seeded
+rows or expect it in an answer; seed rows with an explicit store-assigned key or
+`tenant_id` through the mock's `seed` instead of creating them (the mock now refuses
+such a create as production does); drop `tenant_id` from capability response
+schemas; and set `keepTenantId` only if the App's code must read the tenant from a row.
+
 ### Bulk create
 
 `create()` takes one record. `createMany()` takes a list and inserts it in one request,
@@ -211,7 +230,7 @@ return $app->handle($context);
 | `$c->header($name)` | any request header |
 | `$c->actor` | who is acting |
 | `$c->settings()` | the App's settings for this request |
-| `$c->json($data, $status)` | the answer, without `tenant_id` (see below) |
+| `$c->json($data, $status)` | the answer |
 | `$c->log($message)` | the function log |
 
 Routing rules:
@@ -220,24 +239,6 @@ Routing rules:
   `/markets/{id}`.
 - An unknown path answers `404`; a known path with the wrong method answers `405`.
 - `GET /` answers the App's name and its routes, as a health check.
-
-An answer never carries `tenant_id`: `$c->json()` leaves the key out of every record
-at any depth — the answer, lists, envelopes, embedded relations — and so does every
-`Crud::mount` and `Trash::mount` route. A stored document is answered as stored: the
-value of a `json` / `jsonb` column of an entity the request reached through the
-`Client` keeps its own `tenant_id`, so a GET → PUT never deletes it. An object that
-loses the key stays an object (`{}`, `{"0": …}`). A value `"tenant_id"` and keys that
-only resemble it are kept, and the request body is not touched. An App whose answer
-has to name the tenant opts out for all its routes with
-`new App(['name' => '…', 'answerTenantId' => true])`. The walk is
-`Router\Answer::withoutTenantId($value, $documentKeys)`, for code that answers some
-other way.
-
-**Raising an App to 3.0:** drop `tenant_id` from tests that expect it in an answer;
-seed rows with an explicit store-assigned key or `tenant_id` through the mock's
-`seed` instead of creating them (the mock now refuses such a create as production
-does); and set `answerTenantId` only if the App's callers must read the tenant from
-the answer.
 
 ### One-line CRUD
 

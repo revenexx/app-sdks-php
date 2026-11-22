@@ -43,8 +43,7 @@ final class RouteContext
     /**
      * Answer with JSON. Use this, not `$context->res->json()`: the runtime's
      * own `json()` encodes with JSON_FORCE_OBJECT, which turns every list into
-     * an object (`{"0":…}`). The answer carries no `tenant_id` key at any
-     * depth, unless the App was created with `['answerTenantId' => true]`.
+     * an object (`{"0":…}`).
      */
     public function json(mixed $data, int $status = 200): mixed
     {

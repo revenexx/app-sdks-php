@@ -156,6 +156,12 @@ final class Crud
                 // A record sent back repeats what no write may set: dropped
                 // when it says what the record says, refused otherwise.
                 $fields = RoundTrip::update($entity->pk, $columns, $id, $body, static fn (): array => $row, $readOnly);
+                // The client returns rows without `tenant_id`, so the row just
+                // read cannot say whether a body's tenant repeats it: the
+                // client's update compares it against the stored row.
+                if (\array_key_exists('tenant_id', $body) && ! \array_key_exists('tenant_id', $row)) {
+                    $fields['tenant_id'] = $body['tenant_id'];
+                }
                 // The parent key comes from the path whatever the body says.
                 if ($parent !== null) {
                     unset($fields[$parent['column']]);

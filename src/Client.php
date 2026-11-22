@@ -21,12 +21,16 @@ final class Client
      * @param array<string, Entity>          $entities
      * @param array<string, EventDescriptor> $declaredEvents the App's own `trigger: "app"` events
      * @param ?string                        $emitFn         the routine the platform generated for them
+     * @param bool                           $keepTenantId   keep `tenant_id` on the rows the client returns;
+     *                                                       off by default ({@see Tenant}), for an App
+     *                                                       whose code has to read the tenant from a row
      */
     public function __construct(
         private readonly Adapter $adapter,
         private readonly array $entities,
         private readonly ?string $emitFn = null,
         private readonly array $declaredEvents = [],
+        private readonly bool $keepTenantId = false,
     ) {
     }
 
@@ -64,7 +68,7 @@ final class Client
     {
         $this->guard($entity, 'list');
 
-        return $this->adapter->list($entity, $query);
+        return $this->many($this->adapter->list($entity, $query), $query['select'] ?? null);
     }
 
     /**
@@ -82,7 +86,10 @@ final class Client
             throw new \RuntimeException("{$entity->name}.page() is not supported by the '{$this->adapter->kind()}' adapter");
         }
 
-        return $this->adapter->page($entity, $query);
+        $page = $this->adapter->page($entity, $query);
+        $page['items'] = $this->many($page['items'], $query['select'] ?? null);
+
+        return $page;
     }
 
     /** @return array<string, mixed>|null */
@@ -90,7 +97,7 @@ final class Client
     {
         $this->guard($entity, 'get');
 
-        return $this->adapter->get($entity, $id);
+        return $this->one($this->adapter->get($entity, $id));
     }
 
     /**
@@ -107,7 +114,7 @@ final class Client
 
         // A refusal of the tenant or a store-assigned key names the field
         // ({@see RoundTrip::storeOwnedRefusal()}), not "unauthenticated".
-        return $this->namingStoreOwned($entity, $data, fn (): array => $this->adapter->create($entity, $data));
+        return $this->one($this->namingStoreOwned($entity, $data, fn (): array => $this->adapter->create($entity, $data)));
     }
 
     /**
@@ -130,7 +137,7 @@ final class Client
 
         $adapter = $this->adapter;
 
-        return $this->namingStoreOwned($entity, $records, static fn (): array => $adapter->createMany($entity, $records));
+        return $this->many($this->namingStoreOwned($entity, $records, static fn (): array => $adapter->createMany($entity, $records)));
     }
 
     /**
@@ -160,10 +167,33 @@ final class Client
             throw HttpError::notFound();
         }
         if ($write === []) {
-            return $stored() ?? throw HttpError::notFound();
+            return $this->one($stored() ?? throw HttpError::notFound());
         }
 
-        return $this->namingStoreOwned($entity, $write, fn (): array => $this->adapter->update($entity, $id, $write));
+        // The write is never refused for the key or the tenant: the rule above
+        // dropped or refused both. Wrapped for a write past that rule.
+        return $this->one($this->namingStoreOwned($entity, $write, fn (): array => $this->adapter->update($entity, $id, $write)));
+    }
+
+    /**
+     * A row the client returns: without `tenant_id`, unless the client keeps it
+     * ({@see Tenant}). The rules that compare against the stored tenant read
+     * the adapter's row, never this one.
+     */
+    private function one(mixed $row): mixed
+    {
+        return $this->keepTenantId ? $row : Tenant::readRow($row);
+    }
+
+    /**
+     * Rows the client returns, and the embedded rows the select names in them.
+     *
+     * @param list<mixed> $rows
+     * @return list<mixed>
+     */
+    private function many(array $rows, mixed $select = null): array
+    {
+        return $this->keepTenantId ? $rows : Tenant::readRows($rows, Tenant::embedsOf($select));
     }
 
     /**
@@ -244,12 +274,14 @@ final class Client
         if ($write === []) {
             $rows = $this->adapter->list($entity, ['where' => [...$where, $entity->pk => $id], 'limit' => 1]);
 
-            return $rows[0] ?? null;
+            return isset($rows[0]) ? $this->one($rows[0]) : null;
         }
 
         $adapter = $this->adapter;
 
-        return $this->namingStoreOwned($entity, $write, static fn (): ?array => $adapter->updateIf($entity, $id, $where, $write));
+        $row = $this->namingStoreOwned($entity, $write, static fn (): ?array => $adapter->updateIf($entity, $id, $where, $write));
+
+        return $row === null ? null : $this->one($row);
     }
 
     public function remove(Entity $entity, int|string $id): void
@@ -261,8 +293,6 @@ final class Client
     /** `$method` names what the App called when it differs from the op it needs. */
     private function guard(Entity $entity, string $op, ?string $method = null): void
     {
-        // The document columns a request reaching this entity answers as stored.
-        AnswerScope::note($entity->columns);
         if (! $entity->allows($op)) {
             $method ??= $op;
             throw HttpError::forbidden(
